@@ -43,11 +43,11 @@ EPOCHS = 5  # gians original it was 20
 
 # gians PD folders structure
 root = "./"
-dataset_path = root + "dataset_pet/images/"
+dataset_path = root + "dataset_sn/images/"
 training_data = "training/"
 val_data = "validation/"
 
-IMG_FILE_MASK = "*.jpg"
+IMG_FILE_MASK = "*.png"
 
 # For each images of our dataset, we will apply some operations wrapped into
 # a function. Then we will map the whole dataset with this function.
