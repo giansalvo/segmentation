@@ -8,6 +8,7 @@
 """
 import datetime
 import os
+import logging
 from glob import glob
 
 import matplotlib.pyplot as plt
@@ -39,7 +40,7 @@ BATCH_SIZE = 5
 # https://stackoverflow.com/questions/46444018/meaning-of-buffer-size-in-dataset-map-dataset-prefetch-and-dataset-shuffle
 BUFFER_SIZE = 1000
 
-EPOCHS = 5  # gians original it was 20
+EPOCHS = 20  # gians original it was 20
 
 # gians PD folders structure
 root = "./"
@@ -47,7 +48,9 @@ dataset_path = root + "dataset_pet/images/"
 training_data = "training/"
 val_data = "validation/"
 
-IMG_FILE_MASK = "*.jpg"
+DATASET_IMAGES_EXT = "*.jpg"
+DATASET_ANNOTATION_EXT = "*.png"
+
 
 # For each images of our dataset, we will apply some operations wrapped into
 # a function. Then we will map the whole dataset with this function.
@@ -247,23 +250,30 @@ def show_predictions(dataset=None, num=1):
         display_sample([sample_image[0], sample_mask[0],
                         pred_mask[0]])
 
+#########################
+# MAIN SHOULD START HERE
+#########################
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger('gians')
+logger.info("Program started.")
+
 
 # Creating a source dataset
-TRAINSET_SIZE = len(glob(dataset_path + training_data + IMG_FILE_MASK))
+TRAINSET_SIZE = len(glob(dataset_path + training_data + DATASET_IMAGES_EXT))
 print(f"The Training Dataset contains {TRAINSET_SIZE} images.")
 
-VALSET_SIZE = len(glob(dataset_path + val_data + IMG_FILE_MASK))
+VALSET_SIZE = len(glob(dataset_path + val_data + DATASET_IMAGES_EXT))
 print(f"The Validation Dataset contains {VALSET_SIZE} images.")
 
 STEPS_PER_EPOCH = TRAINSET_SIZE // BATCH_SIZE
 VALIDATION_STEPS = VALSET_SIZE // BATCH_SIZE
 
 
-train_dataset = tf.data.Dataset.list_files(dataset_path + training_data + IMG_FILE_MASK, seed=SEED)  # TODO HARDCODED do not use IMG_FILE_MASK
+train_dataset = tf.data.Dataset.list_files(dataset_path + training_data + DATASET_IMAGES_EXT, seed=SEED)  # TODO HARDCODED do not use DATASET_IMAGES_EXT
 train_dataset = train_dataset.map(parse_image)
 
-val_dataset = tf.data.Dataset.list_files(dataset_path + val_data + IMG_FILE_MASK, seed=SEED)  # TODO HARDCODED
-val_dataset =val_dataset.map(parse_image)
+val_dataset = tf.data.Dataset.list_files(dataset_path + val_data + DATASET_IMAGES_EXT, seed=SEED)  # TODO HARDCODED
+val_dataset = val_dataset.map(parse_image)
 
 
 dataset = {"train": train_dataset, "val": val_dataset}
@@ -275,7 +285,7 @@ dataset['train'] = dataset['train'].repeat()
 dataset['train'] = dataset['train'].batch(BATCH_SIZE)
 dataset['train'] = dataset['train'].prefetch(buffer_size=AUTOTUNE)
 
-#-- Validation Dataset --#
+# -- Validation Dataset --#
 dataset['val'] = dataset['val'].map(load_image_test)
 dataset['val'] = dataset['val'].repeat()
 dataset['val'] = dataset['val'].batch(BATCH_SIZE)
@@ -287,11 +297,10 @@ print(dataset['val'])
 # how shuffle works: https://stackoverflow.com/a/53517848
 
 
-# Vizualize the content of our dataloaders to make sure everything is fine.
-for image, mask in dataset['train'].take(1):
-    sample_image, sample_mask = image, mask
-
-display_sample([sample_image[0], sample_mask[0]])
+# Visualize the content of our dataloaders to make sure everything is fine.
+# for image, mask in dataset['train'].take(1):
+#    sample_image, sample_mask = image, mask
+# display_sample([sample_image[0], sample_mask[0]])
 
 
 # -- Keras Functional API -- #
