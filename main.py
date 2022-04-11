@@ -384,7 +384,7 @@ model.compile(optimizer=Adam(learning_rate=0.0001), loss = tf.keras.losses.Spars
 class DisplayCallback(tf.keras.callbacks.Callback):
     def on_epoch_end(self, epoch, logs=None):
         clear_output(wait=True)
-        show_predictions()
+        # show_predictions()
         print ('\nSample Prediction after epoch {}\n'.format(epoch+1))
 
 
