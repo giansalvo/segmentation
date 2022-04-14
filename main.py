@@ -1,11 +1,32 @@
 """
     U-Net Neural Network implementation for image segmentation
 
-    Copyright (c) 2022 Giansalvo Gusinu
+    Copyright (c) 2022 Giansalvo Gusinu <profgusinu@gmail.com>
     Copyright (c) 2020 Yann LE GUILLY
-    see LICENCE
 
+    Code adapted from colab and article found here
+    https://yann-leguilly.gitlab.io/post/2019-12-14-tensorflow-tfdata-segmentation/
+    https://github.com/dhassault/tf-semantic-example
+
+    Permission is hereby granted, free of charge, to any person obtaining a 
+    copy of this software and associated documentation files (the "Software"),
+    to deal in the Software without restriction, including without limitation
+    the rights to use, copy, modify, merge, publish, distribute, sublicense,
+    and/or sell copies of the Software, and to permit persons to whom the
+    Software is furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in
+    all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+    THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+    DEALINGS IN THE SOFTWARE.
 """
+import argparse
 import datetime
 import os
 import logging
@@ -18,11 +39,18 @@ from IPython.display import clear_output
 from tensorflow.keras.layers import *
 from tensorflow.keras.optimizers import Adam
 
+# CONSTANTS
+ACTION_TRAIN = "train"
+ACTION_PREDICT = "predict"
+FEXT_PNG = "*.png"
+FEXT_JPEG = "*.jpg"
+
 # For more information about autotune:
 # https://www.tensorflow.org/guide/data_performance#prefetching
 AUTOTUNE = tf.data.experimental.AUTOTUNE
-print(f"Tensorflow ver. {tf.__version__}")
 
+# DEFAULT PARAMETERS
+H5_NETWORK_MODEL_FNAME = 'best_model_unet.h5'
 # important for reproducibility
 # this allows to generate the same random numbers
 SEED = 42
@@ -34,7 +62,7 @@ N_CHANNELS = 3
 # Scene Parsing has 150 classes + `not labeled`
 N_CLASSES = 151
 
-BATCH_SIZE = 5
+BATCH_SIZE = 32
 
 # for reference about the BUFFER_SIZE in shuffle:
 # https://stackoverflow.com/questions/46444018/meaning-of-buffer-size-in-dataset-map-dataset-prefetch-and-dataset-shuffle
@@ -43,14 +71,17 @@ BUFFER_SIZE = 1000
 EPOCHS = 20  # gians original it was 20
 
 # gians PD folders structure
-root = "./"
-dataset_path = root + "dataset_pet/images/"
-training_data = "training/"
-val_data = "validation/"
+DATASET_ROOT_DIR = "./dataset"
+DATASET_IMG_SUBDIR = "images"
+DATASET_TRAIN_SUBDIR = "training"
+DATASET_VAL_SUBDIR = "validation"
 
-DATASET_IMAGES_EXT = "*.jpg"
-DATASET_ANNOTATION_EXT = "*.png"
+# default parameters
+check = False
 
+# COPYRIGHT NOTICE AND PROGRAM VERSION
+COPYRIGHT_NOTICE = "Copyright (C) 2022 Giansalvo Gusinu <profgusinu@gmail.com>"
+PROGRAM_VERSION = "0.1"
 
 # For each images of our dataset, we will apply some operations wrapped into
 # a function. Then we will map the whole dataset with this function.
@@ -250,31 +281,85 @@ def show_predictions(dataset=None, num=1):
         display_sample([sample_image[0], sample_mask[0],
                         pred_mask[0]])
 
+
+class DisplayCallback(tf.keras.callbacks.Callback):
+    def on_epoch_end(self, epoch, logs=None):
+        clear_output(wait=True)
+        if check:
+            show_predictions()
+            print ('\nSample Prediction after epoch {}\n'.format(epoch+1))
+
+
 #########################
-# MAIN SHOULD START HERE
+# MAIN STARTS HERE
 #########################
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger('gians')
-logger.info("Program started.")
 
+parser = argparse.ArgumentParser(
+    description=COPYRIGHT_NOTICE,
+    epilog="Examples:\n"
+           "         $python %(prog)s train -r dataset_dir -w weigth_file.h5\n"
+           "         $python %(prog)s train -r dataset_dir -w weigth_file.h5 --check\n"
+           "\n"
+           "         $python %(prog)s predict -i image.jpg -w weigth_file.h5 -o image_segm.png\n",
+            formatter_class=argparse.RawTextHelpFormatter)
+parser.add_argument('--version', action='version', version='%(prog)s v.' + PROGRAM_VERSION)
+group = parser.add_mutually_exclusive_group()
+group.add_argument("-v", "--verbose", action="store_true")
+group.add_argument("-q", "--quiet", action="store_true")
+parser.add_argument("action", help="The action: " 
+        + ACTION_TRAIN + ", " + ACTION_PREDICT,
+        choices=(ACTION_TRAIN, ACTION_PREDICT))
+parser.add_argument('--check', dest='check', default=False, action='store_true' , help="Display images to check dataset is ok")
+parser.add_argument('-r', '--dataset_root_dir', required=False, help="The root directory for images")
+parser.add_argument("-o", "--output_file", required=False, help="The output file with the segmented image")
+parser.add_argument("-w", "--weigth_file", required=False, help="The weigth file to be loaded/saved")
 
+args = parser.parse_args()
+
+logger.debug("args.dataset_root_dir=" + str(args.dataset_root_dir))
+
+print(COPYRIGHT_NOTICE)
+print("Program started.")
+print(f"Tensorflow ver. {tf.__version__}")
+
+if args.dataset_root_dir is None:
+    dataset_images_path = DATASET_ROOT_DIR + "/" + DATASET_IMG_SUBDIR
+else:
+    dataset_images_path = args.dataset_root_dir + "/" + DATASET_IMG_SUBDIR
+training_files_regexp = dataset_images_path + "/" + DATASET_TRAIN_SUBDIR + "/" + FEXT_JPEG
+validation_files_regexp = dataset_images_path + "/" + DATASET_VAL_SUBDIR + "/" + FEXT_JPEG
+
+logger.debug("check=" + str(check))
+logger.debug("dataset_images_path=" + dataset_images_path)
+
+logger.debug("TRAINSET=" + training_files_regexp)
 # Creating a source dataset
-TRAINSET_SIZE = len(glob(dataset_path + training_data + DATASET_IMAGES_EXT))
+TRAINSET_SIZE = len(glob(training_files_regexp))
 print(f"The Training Dataset contains {TRAINSET_SIZE} images.")
 
-VALSET_SIZE = len(glob(dataset_path + val_data + DATASET_IMAGES_EXT))
+VALSET_SIZE = len(glob(validation_files_regexp))
 print(f"The Validation Dataset contains {VALSET_SIZE} images.")
+
+if TRAINSET_SIZE == 0 or VALSET_SIZE == 0:
+    print("ERROR: Training dataset and validation datasets must be not empty!")
+    exit()
 
 STEPS_PER_EPOCH = TRAINSET_SIZE // BATCH_SIZE
 VALIDATION_STEPS = VALSET_SIZE // BATCH_SIZE
 
+logger.debug("STEPS_PER_EPOCH=" + str(STEPS_PER_EPOCH))
+logger.debug("VALIDATION_STEPS=" + str(VALIDATION_STEPS))
+if STEPS_PER_EPOCH == 0:
+    print("ERROR: Not enough images for the training process!")
+    exit()
 
-train_dataset = tf.data.Dataset.list_files(dataset_path + training_data + DATASET_IMAGES_EXT, seed=SEED)  # TODO HARDCODED do not use DATASET_IMAGES_EXT
+train_dataset = tf.data.Dataset.list_files(training_files_regexp, seed=SEED)
 train_dataset = train_dataset.map(parse_image)
 
-val_dataset = tf.data.Dataset.list_files(dataset_path + val_data + DATASET_IMAGES_EXT, seed=SEED)  # TODO HARDCODED
+val_dataset = tf.data.Dataset.list_files(validation_files_regexp, seed=SEED)
 val_dataset = val_dataset.map(parse_image)
-
 
 dataset = {"train": train_dataset, "val": val_dataset}
 
@@ -291,17 +376,17 @@ dataset['val'] = dataset['val'].repeat()
 dataset['val'] = dataset['val'].batch(BATCH_SIZE)
 dataset['val'] = dataset['val'].prefetch(buffer_size=AUTOTUNE)
 
+#TODO DEBUG remove
 print(dataset['train'])
 print(dataset['val'])
 
 # how shuffle works: https://stackoverflow.com/a/53517848
 
-
 # Visualize the content of our dataloaders to make sure everything is fine.
-# for image, mask in dataset['train'].take(1):
-#    sample_image, sample_mask = image, mask
-# display_sample([sample_image[0], sample_mask[0]])
-
+if check == True:
+    for image, mask in dataset['train'].take(1):
+        sample_image, sample_mask = image, mask
+    display_sample([sample_image[0], sample_mask[0]])
 
 # -- Keras Functional API -- #
 # -- UNet Implementation -- #
@@ -315,7 +400,6 @@ input_size = (IMG_SIZE, IMG_SIZE, N_CHANNELS)
 # Or the excelent fastai course:
 # https://github.com/fastai/course-v3/blob/master/nbs/dl2/02b_initializing.ipynb
 initializer = 'he_normal'
-
 
 # -- Encoder -- #
 # Block encoder 1
@@ -380,15 +464,6 @@ model = tf.keras.Model(inputs = inputs, outputs = output)
 model.compile(optimizer=Adam(learning_rate=0.0001), loss = tf.keras.losses.SparseCategoricalCrossentropy(),
               metrics=['accuracy'])
 
-
-class DisplayCallback(tf.keras.callbacks.Callback):
-    def on_epoch_end(self, epoch, logs=None):
-        clear_output(wait=True)
-        # show_predictions()
-        print ('\nSample Prediction after epoch {}\n'.format(epoch+1))
-
-
-
 logdir = os.path.join("logs", datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
 tensorboard_callback = tf.keras.callbacks.TensorBoard(logdir, histogram_freq=1)
 
@@ -400,7 +475,7 @@ callbacks = [
     # if no accuracy improvements we can stop the training directly
     tf.keras.callbacks.EarlyStopping(patience=10, verbose=1),
     # to save checkpoints
-    tf.keras.callbacks.ModelCheckpoint('best_model_unet.h5', verbose=1, save_best_only=True, save_weights_only=True)
+    tf.keras.callbacks.ModelCheckpoint(H5_NETWORK_MODEL_FNAME, verbose=1, save_best_only=True, save_weights_only=True)
 ]
 
 model = tf.keras.Model(inputs = inputs, outputs = output)
