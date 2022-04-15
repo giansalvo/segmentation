@@ -75,6 +75,7 @@ DATASET_ROOT_DIR = "./dataset"
 DATASET_IMG_SUBDIR = "images"
 DATASET_TRAIN_SUBDIR = "training"
 DATASET_VAL_SUBDIR = "validation"
+LOGS_DIR = "logs"
 
 # default parameters
 check = False
@@ -82,6 +83,7 @@ check = False
 # COPYRIGHT NOTICE AND PROGRAM VERSION
 COPYRIGHT_NOTICE = "Copyright (C) 2022 Giansalvo Gusinu <profgusinu@gmail.com>"
 PROGRAM_VERSION = "0.1"
+
 
 # For each images of our dataset, we will apply some operations wrapped into
 # a function. Then we will map the whole dataset with this function.
@@ -282,12 +284,88 @@ def show_predictions(dataset=None, num=1):
                         pred_mask[0]])
 
 
+def create_model_UNet():
+    # -- Keras Functional API -- #
+    # -- UNet Implementation -- #
+    # Everything here is from tensorflow.keras.layers
+    # I imported tensorflow.keras.layers * to make it easier to read
+    dropout_rate = 0.5  # TODO REMOVE NOT USED???
+    input_size = (IMG_SIZE, IMG_SIZE, N_CHANNELS)
+
+    # If you want to know more about why we are using `he_normal`:
+    # https://stats.stackexchange.com/questions/319323/whats-the-difference-between-variance-scaling-initializer-and-xavier-initialize/319849#319849
+    # Or the excelent fastai course:
+    # https://github.com/fastai/course-v3/blob/master/nbs/dl2/02b_initializing.ipynb
+    initializer = 'he_normal'
+
+    # -- Encoder -- #
+    # Block encoder 1
+    inputs = Input(shape=input_size)
+    conv_enc_1 = Conv2D(64, 3, activation='relu', padding='same', kernel_initializer=initializer)(inputs)
+    conv_enc_1 = Conv2D(64, 3, activation='relu', padding='same', kernel_initializer=initializer)(conv_enc_1)
+    # Block encoder 2
+    max_pool_enc_2 = MaxPooling2D(pool_size=(2, 2))(conv_enc_1)
+    conv_enc_2 = Conv2D(128, 3, activation='relu', padding='same', kernel_initializer=initializer)(max_pool_enc_2)
+    conv_enc_2 = Conv2D(128, 3, activation='relu', padding='same', kernel_initializer=initializer)(conv_enc_2)
+    # Block  encoder 3
+    max_pool_enc_3 = MaxPooling2D(pool_size=(2, 2))(conv_enc_2)
+    conv_enc_3 = Conv2D(256, 3, activation='relu', padding='same', kernel_initializer=initializer)(max_pool_enc_3)
+    conv_enc_3 = Conv2D(256, 3, activation='relu', padding='same', kernel_initializer=initializer)(conv_enc_3)
+    # Block  encoder 4
+    max_pool_enc_4 = MaxPooling2D(pool_size=(2, 2))(conv_enc_3)
+    conv_enc_4 = Conv2D(512, 3, activation='relu', padding='same', kernel_initializer=initializer)(max_pool_enc_4)
+    conv_enc_4 = Conv2D(512, 3, activation='relu', padding='same', kernel_initializer=initializer)(conv_enc_4)
+    # -- End Encoder -- #
+    # ----------- #
+    maxpool = MaxPooling2D(pool_size=(2, 2))(conv_enc_4)
+    conv = Conv2D(1024, 3, activation='relu', padding='same', kernel_initializer=initializer)(maxpool)
+    conv = Conv2D(1024, 3, activation='relu', padding='same', kernel_initializer=initializer)(conv)
+    # ----------- #
+    # -- Decoder -- #
+    # Block decoder 1
+    up_dec_1 = Conv2D(512, 2, activation='relu', padding='same', kernel_initializer=initializer)(
+        UpSampling2D(size=(2, 2))(conv))
+    merge_dec_1 = concatenate([conv_enc_4, up_dec_1], axis=3)
+    conv_dec_1 = Conv2D(512, 3, activation='relu', padding='same', kernel_initializer=initializer)(merge_dec_1)
+    conv_dec_1 = Conv2D(512, 3, activation='relu', padding='same', kernel_initializer=initializer)(conv_dec_1)
+    # Block decoder 2
+    up_dec_2 = Conv2D(256, 2, activation='relu', padding='same', kernel_initializer=initializer)(
+        UpSampling2D(size=(2, 2))(conv_dec_1))
+    merge_dec_2 = concatenate([conv_enc_3, up_dec_2], axis=3)
+    conv_dec_2 = Conv2D(256, 3, activation='relu', padding='same', kernel_initializer=initializer)(merge_dec_2)
+    conv_dec_2 = Conv2D(256, 3, activation='relu', padding='same', kernel_initializer=initializer)(conv_dec_2)
+    # Block decoder 3
+    up_dec_3 = Conv2D(128, 2, activation='relu', padding='same', kernel_initializer=initializer)(
+        UpSampling2D(size=(2, 2))(conv_dec_2))
+    merge_dec_3 = concatenate([conv_enc_2, up_dec_3], axis=3)
+    conv_dec_3 = Conv2D(128, 3, activation='relu', padding='same', kernel_initializer=initializer)(merge_dec_3)
+    conv_dec_3 = Conv2D(128, 3, activation='relu', padding='same', kernel_initializer=initializer)(conv_dec_3)
+    # Block decoder 4
+    up_dec_4 = Conv2D(64, 2, activation='relu', padding='same', kernel_initializer=initializer)(
+        UpSampling2D(size=(2, 2))(conv_dec_3))
+    merge_dec_4 = concatenate([conv_enc_1, up_dec_4], axis=3)
+    conv_dec_4 = Conv2D(64, 3, activation='relu', padding='same', kernel_initializer=initializer)(merge_dec_4)
+    conv_dec_4 = Conv2D(64, 3, activation='relu', padding='same', kernel_initializer=initializer)(conv_dec_4)
+    conv_dec_4 = Conv2D(2, 3, activation='relu', padding='same', kernel_initializer=initializer)(conv_dec_4)
+    # -- End Decoder -- #
+    output = Conv2D(N_CLASSES, 1, activation='softmax')(conv_dec_4)
+
+    model = tf.keras.Model(inputs=inputs, outputs=output)
+    # optimizer=tfa.optimizers.RectifiedAdam(lr=1e-3)
+    optimizer = Adam(learning_rate=0.0001)
+    loss = tf.keras.losses.SparseCategoricalCrossentropy()
+    model.compile(optimizer=optimizer,
+                  loss=loss,
+                  metrics=['accuracy'])
+    return model
+
+
 class DisplayCallback(tf.keras.callbacks.Callback):
     def on_epoch_end(self, epoch, logs=None):
         clear_output(wait=True)
         if check:
             show_predictions()
-            print ('\nSample Prediction after epoch {}\n'.format(epoch+1))
+            print('\nSample Prediction after epoch {}\n'.format(epoch + 1))
 
 
 #########################
@@ -303,26 +381,27 @@ parser = argparse.ArgumentParser(
            "         $python %(prog)s train -r dataset_dir -w weigth_file.h5 --check\n"
            "\n"
            "         $python %(prog)s predict -i image.jpg -w weigth_file.h5 -o image_segm.png\n",
-            formatter_class=argparse.RawTextHelpFormatter)
+    formatter_class=argparse.RawTextHelpFormatter)
 parser.add_argument('--version', action='version', version='%(prog)s v.' + PROGRAM_VERSION)
 group = parser.add_mutually_exclusive_group()
 group.add_argument("-v", "--verbose", action="store_true")
 group.add_argument("-q", "--quiet", action="store_true")
-parser.add_argument("action", help="The action: " 
-        + ACTION_TRAIN + ", " + ACTION_PREDICT,
-        choices=(ACTION_TRAIN, ACTION_PREDICT))
-parser.add_argument('--check', dest='check', default=False, action='store_true' , help="Display images to check dataset is ok")
+parser.add_argument("action", help="The action: "
+                                   + ACTION_TRAIN + ", " + ACTION_PREDICT,
+                    choices=(ACTION_TRAIN, ACTION_PREDICT))
+parser.add_argument('--check', dest='check', default=False, action='store_true',
+                    help="Display images to check dataset is ok")
 parser.add_argument('-r', '--dataset_root_dir', required=False, help="The root directory for images")
 parser.add_argument("-o", "--output_file", required=False, help="The output file with the segmented image")
 parser.add_argument("-w", "--weigth_file", required=False, help="The weigth file to be loaded/saved")
 
 args = parser.parse_args()
 
-logger.debug("args.dataset_root_dir=" + str(args.dataset_root_dir))
-
 print(COPYRIGHT_NOTICE)
 print("Program started.")
 print(f"Tensorflow ver. {tf.__version__}")
+
+check = args.check
 
 if args.dataset_root_dir is None:
     dataset_images_path = DATASET_ROOT_DIR + "/" + DATASET_IMG_SUBDIR
@@ -376,95 +455,21 @@ dataset['val'] = dataset['val'].repeat()
 dataset['val'] = dataset['val'].batch(BATCH_SIZE)
 dataset['val'] = dataset['val'].prefetch(buffer_size=AUTOTUNE)
 
-#TODO DEBUG remove
+# TODO DEBUG remove
 print(dataset['train'])
 print(dataset['val'])
 
 # how shuffle works: https://stackoverflow.com/a/53517848
 
 # Visualize the content of our dataloaders to make sure everything is fine.
-if check == True:
+if check:
+    print("Displaying content of dataset to make sure everything is fine and exit...")
     for image, mask in dataset['train'].take(1):
         sample_image, sample_mask = image, mask
     display_sample([sample_image[0], sample_mask[0]])
+    exit()
 
-# -- Keras Functional API -- #
-# -- UNet Implementation -- #
-# Everything here is from tensorflow.keras.layers
-# I imported tensorflow.keras.layers * to make it easier to read
-dropout_rate = 0.5
-input_size = (IMG_SIZE, IMG_SIZE, N_CHANNELS)
-
-# If you want to know more about why we are using `he_normal`:
-# https://stats.stackexchange.com/questions/319323/whats-the-difference-between-variance-scaling-initializer-and-xavier-initialize/319849#319849
-# Or the excelent fastai course:
-# https://github.com/fastai/course-v3/blob/master/nbs/dl2/02b_initializing.ipynb
-initializer = 'he_normal'
-
-# -- Encoder -- #
-# Block encoder 1
-inputs = Input(shape=input_size)
-conv_enc_1 = Conv2D(64, 3, activation='relu', padding='same', kernel_initializer=initializer)(inputs)
-conv_enc_1 = Conv2D(64, 3, activation = 'relu', padding='same', kernel_initializer=initializer)(conv_enc_1)
-
-# Block encoder 2
-max_pool_enc_2 = MaxPooling2D(pool_size=(2, 2))(conv_enc_1)
-conv_enc_2 = Conv2D(128, 3, activation = 'relu', padding = 'same', kernel_initializer = initializer)(max_pool_enc_2)
-conv_enc_2 = Conv2D(128, 3, activation = 'relu', padding = 'same', kernel_initializer = initializer)(conv_enc_2)
-
-# Block  encoder 3
-max_pool_enc_3 = MaxPooling2D(pool_size=(2, 2))(conv_enc_2)
-conv_enc_3 = Conv2D(256, 3, activation = 'relu', padding = 'same', kernel_initializer = initializer)(max_pool_enc_3)
-conv_enc_3 = Conv2D(256, 3, activation = 'relu', padding = 'same', kernel_initializer = initializer)(conv_enc_3)
-
-# Block  encoder 4
-max_pool_enc_4 = MaxPooling2D(pool_size=(2, 2))(conv_enc_3)
-conv_enc_4 = Conv2D(512, 3, activation = 'relu', padding = 'same', kernel_initializer = initializer)(max_pool_enc_4)
-conv_enc_4 = Conv2D(512, 3, activation = 'relu', padding = 'same', kernel_initializer = initializer)(conv_enc_4)
-# -- Encoder -- #
-
-# ----------- #
-maxpool = MaxPooling2D(pool_size=(2, 2))(conv_enc_4)
-conv = Conv2D(1024, 3, activation = 'relu', padding = 'same', kernel_initializer = initializer)(maxpool)
-conv = Conv2D(1024, 3, activation = 'relu', padding = 'same', kernel_initializer = initializer)(conv)
-# ----------- #
-
-# -- Decoder -- #
-# Block decoder 1
-up_dec_1 = Conv2D(512, 2, activation = 'relu', padding = 'same', kernel_initializer = initializer)(UpSampling2D(size = (2,2))(conv))
-merge_dec_1 = concatenate([conv_enc_4, up_dec_1], axis = 3)
-conv_dec_1 = Conv2D(512, 3, activation = 'relu', padding = 'same', kernel_initializer = initializer)(merge_dec_1)
-conv_dec_1 = Conv2D(512, 3, activation = 'relu', padding = 'same', kernel_initializer = initializer)(conv_dec_1)
-
-# Block decoder 2
-up_dec_2 = Conv2D(256, 2, activation = 'relu', padding = 'same', kernel_initializer = initializer)(UpSampling2D(size = (2,2))(conv_dec_1))
-merge_dec_2 = concatenate([conv_enc_3, up_dec_2], axis = 3)
-conv_dec_2 = Conv2D(256, 3, activation = 'relu', padding = 'same', kernel_initializer = initializer)(merge_dec_2)
-conv_dec_2 = Conv2D(256, 3, activation = 'relu', padding = 'same', kernel_initializer = initializer)(conv_dec_2)
-
-# Block decoder 3
-up_dec_3 = Conv2D(128, 2, activation = 'relu', padding = 'same', kernel_initializer = initializer)(UpSampling2D(size = (2,2))(conv_dec_2))
-merge_dec_3 = concatenate([conv_enc_2, up_dec_3], axis = 3)
-conv_dec_3 = Conv2D(128, 3, activation = 'relu', padding = 'same', kernel_initializer = initializer)(merge_dec_3)
-conv_dec_3 = Conv2D(128, 3, activation = 'relu', padding = 'same', kernel_initializer = initializer)(conv_dec_3)
-
-# Block decoder 4
-up_dec_4 = Conv2D(64, 2, activation = 'relu', padding = 'same', kernel_initializer = initializer)(UpSampling2D(size = (2,2))(conv_dec_3))
-merge_dec_4 = concatenate([conv_enc_1, up_dec_4], axis = 3)
-conv_dec_4 = Conv2D(64, 3, activation = 'relu', padding = 'same', kernel_initializer = initializer)(merge_dec_4)
-conv_dec_4 = Conv2D(64, 3, activation = 'relu', padding = 'same', kernel_initializer = initializer)(conv_dec_4)
-conv_dec_4 = Conv2D(2, 3, activation = 'relu', padding = 'same', kernel_initializer = initializer)(conv_dec_4)
-# -- Dencoder -- #
-
-output = Conv2D(N_CLASSES, 1, activation = 'softmax')(conv_dec_4)
-
-
-model = tf.keras.Model(inputs = inputs, outputs = output)
-
-model.compile(optimizer=Adam(learning_rate=0.0001), loss = tf.keras.losses.SparseCategoricalCrossentropy(),
-              metrics=['accuracy'])
-
-logdir = os.path.join("logs", datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
+logdir = os.path.join(LOGS_DIR, datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
 tensorboard_callback = tf.keras.callbacks.TensorBoard(logdir, histogram_freq=1)
 
 callbacks = [
@@ -478,20 +483,12 @@ callbacks = [
     tf.keras.callbacks.ModelCheckpoint(H5_NETWORK_MODEL_FNAME, verbose=1, save_best_only=True, save_weights_only=True)
 ]
 
-model = tf.keras.Model(inputs = inputs, outputs = output)
-
-optimizer = Adam(learning_rate=0.0001)
-
-loss = tf.keras.losses.SparseCategoricalCrossentropy()
-
-
-model.compile(optimizer=optimizer, loss = loss,
-                  metrics=['accuracy'])
+model = create_model_UNet()
 
 model_history = model.fit(dataset['train'], epochs=EPOCHS,
-                    steps_per_epoch=STEPS_PER_EPOCH,
-                    validation_steps=VALIDATION_STEPS,
-                    validation_data=dataset['val'],
-                    callbacks=callbacks)
+                          steps_per_epoch=STEPS_PER_EPOCH,
+                          validation_steps=VALIDATION_STEPS,
+                          validation_data=dataset['val'],
+                          callbacks=callbacks)
 
 print("Program terminated correctly.")
