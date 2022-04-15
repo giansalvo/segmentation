@@ -31,6 +31,7 @@ import datetime
 import os
 import logging
 from glob import glob
+from turtle import end_fill
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -38,10 +39,12 @@ import tensorflow as tf
 from IPython.display import clear_output
 from tensorflow.keras.layers import *
 from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.preprocessing import image
 
 # CONSTANTS
 ACTION_TRAIN = "train"
 ACTION_PREDICT = "predict"
+ACTION_SUMMARY = "summary"
 FEXT_PNG = "*.png"
 FEXT_JPEG = "*.jpg"
 
@@ -210,17 +213,15 @@ def load_image_test(datapoint: dict) -> tuple:
     return input_image, input_mask
 
 
-def display_sample(display_list):
+def display_sample(display_list, title_list=['Input Image', 'True Mask', 'Predicted Mask']):
     """Show side-by-side an input image,
     the ground truth and the prediction.
     """
     plt.figure(figsize=(18, 18))
 
-    title = ['Input Image', 'True Mask', 'Predicted Mask']
-
     for i in range(len(display_list)):
         plt.subplot(1, len(display_list), i + 1)
-        plt.title(title[i])
+        plt.title(title_list[i])
         plt.imshow(tf.keras.preprocessing.image.array_to_img(display_list[i]))
         plt.axis('off')
     plt.show()
@@ -350,7 +351,7 @@ def create_model_UNet():
     # -- End Decoder -- #
     output = Conv2D(N_CLASSES, 1, activation='softmax')(conv_dec_4)
 
-    model = tf.keras.Model(inputs=inputs, outputs=output)
+    model = tf.keras.Model(inputs=inputs, outputs=output, name="U-Net")
     # optimizer=tfa.optimizers.RectifiedAdam(lr=1e-3)
     optimizer = Adam(learning_rate=0.0001)
     loss = tf.keras.losses.SparseCategoricalCrossentropy()
@@ -359,6 +360,25 @@ def create_model_UNet():
                   metrics=['accuracy'])
     return model
 
+
+def train_network():
+    logdir = os.path.join(LOGS_DIR, datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
+    tensorboard_callback = tf.keras.callbacks.TensorBoard(logdir, histogram_freq=1)
+    callbacks = [
+        # to show samples after each epoch
+        DisplayCallback(),
+        # to collect some useful metrics and visualize them in tensorboard
+        tensorboard_callback,
+        # if no accuracy improvements we can stop the training directly
+        tf.keras.callbacks.EarlyStopping(patience=10, verbose=1),
+        # to save checkpoints
+        tf.keras.callbacks.ModelCheckpoint(H5_NETWORK_MODEL_FNAME, verbose=1, save_best_only=True, save_weights_only=True)
+    ]
+    model_history = model.fit(dataset['train'], epochs=EPOCHS,
+                            steps_per_epoch=STEPS_PER_EPOCH,
+                            validation_steps=VALIDATION_STEPS,
+                            validation_data=dataset['val'],
+                            callbacks=callbacks)
 
 class DisplayCallback(tf.keras.callbacks.Callback):
     def on_epoch_end(self, epoch, logs=None):
@@ -377,6 +397,8 @@ logger = logging.getLogger('gians')
 parser = argparse.ArgumentParser(
     description=COPYRIGHT_NOTICE,
     epilog="Examples:\n"
+           "         $python %(prog)s summary\n"
+           "\n"
            "         $python %(prog)s train -r dataset_dir -w weigth_file.h5\n"
            "         $python %(prog)s train -r dataset_dir -w weigth_file.h5 --check\n"
            "\n"
@@ -386,9 +408,9 @@ parser.add_argument('--version', action='version', version='%(prog)s v.' + PROGR
 group = parser.add_mutually_exclusive_group()
 group.add_argument("-v", "--verbose", action="store_true")
 group.add_argument("-q", "--quiet", action="store_true")
-parser.add_argument("action", help="The action: "
-                                   + ACTION_TRAIN + ", " + ACTION_PREDICT,
-                    choices=(ACTION_TRAIN, ACTION_PREDICT))
+parser.add_argument("action", help="The action to perform: "
+                                   + ACTION_TRAIN + ", " + ACTION_PREDICT + ", " + ACTION_SUMMARY , 
+                    choices=(ACTION_TRAIN, ACTION_PREDICT, ACTION_SUMMARY))
 parser.add_argument('--check', dest='check', default=False, action='store_true',
                     help="Display images to check dataset is ok")
 parser.add_argument('-r', '--dataset_root_dir', required=False, help="The root directory for images")
@@ -403,92 +425,89 @@ print(f"Tensorflow ver. {tf.__version__}")
 
 check = args.check
 
-if args.dataset_root_dir is None:
-    dataset_images_path = DATASET_ROOT_DIR + "/" + DATASET_IMG_SUBDIR
-else:
-    dataset_images_path = args.dataset_root_dir + "/" + DATASET_IMG_SUBDIR
-training_files_regexp = dataset_images_path + "/" + DATASET_TRAIN_SUBDIR + "/" + FEXT_JPEG
-validation_files_regexp = dataset_images_path + "/" + DATASET_VAL_SUBDIR + "/" + FEXT_JPEG
-
-logger.debug("check=" + str(check))
-logger.debug("dataset_images_path=" + dataset_images_path)
-
-logger.debug("TRAINSET=" + training_files_regexp)
-# Creating a source dataset
-TRAINSET_SIZE = len(glob(training_files_regexp))
-print(f"The Training Dataset contains {TRAINSET_SIZE} images.")
-
-VALSET_SIZE = len(glob(validation_files_regexp))
-print(f"The Validation Dataset contains {VALSET_SIZE} images.")
-
-if TRAINSET_SIZE == 0 or VALSET_SIZE == 0:
-    print("ERROR: Training dataset and validation datasets must be not empty!")
-    exit()
-
-STEPS_PER_EPOCH = TRAINSET_SIZE // BATCH_SIZE
-VALIDATION_STEPS = VALSET_SIZE // BATCH_SIZE
-
-logger.debug("STEPS_PER_EPOCH=" + str(STEPS_PER_EPOCH))
-logger.debug("VALIDATION_STEPS=" + str(VALIDATION_STEPS))
-if STEPS_PER_EPOCH == 0:
-    print("ERROR: Not enough images for the training process!")
-    exit()
-
-train_dataset = tf.data.Dataset.list_files(training_files_regexp, seed=SEED)
-train_dataset = train_dataset.map(parse_image)
-
-val_dataset = tf.data.Dataset.list_files(validation_files_regexp, seed=SEED)
-val_dataset = val_dataset.map(parse_image)
-
-dataset = {"train": train_dataset, "val": val_dataset}
-
-# -- Train Dataset --#
-dataset['train'] = dataset['train'].map(load_image_train, num_parallel_calls=tf.data.experimental.AUTOTUNE)
-dataset['train'] = dataset['train'].shuffle(buffer_size=BUFFER_SIZE, seed=SEED)
-dataset['train'] = dataset['train'].repeat()
-dataset['train'] = dataset['train'].batch(BATCH_SIZE)
-dataset['train'] = dataset['train'].prefetch(buffer_size=AUTOTUNE)
-
-# -- Validation Dataset --#
-dataset['val'] = dataset['val'].map(load_image_test)
-dataset['val'] = dataset['val'].repeat()
-dataset['val'] = dataset['val'].batch(BATCH_SIZE)
-dataset['val'] = dataset['val'].prefetch(buffer_size=AUTOTUNE)
-
-# TODO DEBUG remove
-print(dataset['train'])
-print(dataset['val'])
-
-# how shuffle works: https://stackoverflow.com/a/53517848
-
-# Visualize the content of our dataloaders to make sure everything is fine.
-if check:
-    print("Displaying content of dataset to make sure everything is fine and exit...")
-    for image, mask in dataset['train'].take(1):
-        sample_image, sample_mask = image, mask
-    display_sample([sample_image[0], sample_mask[0]])
-    exit()
-
-logdir = os.path.join(LOGS_DIR, datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
-tensorboard_callback = tf.keras.callbacks.TensorBoard(logdir, histogram_freq=1)
-
-callbacks = [
-    # to show samples after each epoch
-    DisplayCallback(),
-    # to collect some useful metrics and visualize them in tensorboard
-    tensorboard_callback,
-    # if no accuracy improvements we can stop the training directly
-    tf.keras.callbacks.EarlyStopping(patience=10, verbose=1),
-    # to save checkpoints
-    tf.keras.callbacks.ModelCheckpoint(H5_NETWORK_MODEL_FNAME, verbose=1, save_best_only=True, save_weights_only=True)
-]
-
 model = create_model_UNet()
 
-model_history = model.fit(dataset['train'], epochs=EPOCHS,
-                          steps_per_epoch=STEPS_PER_EPOCH,
-                          validation_steps=VALIDATION_STEPS,
-                          validation_data=dataset['val'],
-                          callbacks=callbacks)
+if args.action == ACTION_TRAIN:
+    if args.dataset_root_dir is None:
+        dataset_images_path = DATASET_ROOT_DIR + "/" + DATASET_IMG_SUBDIR
+    else:
+        dataset_images_path = args.dataset_root_dir + "/" + DATASET_IMG_SUBDIR
+    training_files_regexp = dataset_images_path + "/" + DATASET_TRAIN_SUBDIR + "/" + FEXT_JPEG
+    validation_files_regexp = dataset_images_path + "/" + DATASET_VAL_SUBDIR + "/" + FEXT_JPEG
+
+    logger.debug("check=" + str(check))
+    logger.debug("dataset_images_path=" + dataset_images_path)
+
+    logger.debug("TRAINSET=" + training_files_regexp)
+    # Creating a source dataset
+    TRAINSET_SIZE = len(glob(training_files_regexp))
+    print(f"The Training Dataset contains {TRAINSET_SIZE} images.")
+
+    VALSET_SIZE = len(glob(validation_files_regexp))
+    print(f"The Validation Dataset contains {VALSET_SIZE} images.")
+
+    if TRAINSET_SIZE == 0 or VALSET_SIZE == 0:
+        print("ERROR: Training dataset and validation datasets must be not empty!")
+        exit()
+
+    STEPS_PER_EPOCH = TRAINSET_SIZE // BATCH_SIZE
+    VALIDATION_STEPS = VALSET_SIZE // BATCH_SIZE
+
+    logger.debug("STEPS_PER_EPOCH=" + str(STEPS_PER_EPOCH))
+    logger.debug("VALIDATION_STEPS=" + str(VALIDATION_STEPS))
+    if STEPS_PER_EPOCH == 0:
+        print("ERROR: Not enough images for the training process!")
+        exit()
+
+    train_dataset = tf.data.Dataset.list_files(training_files_regexp, seed=SEED)
+    train_dataset = train_dataset.map(parse_image)
+
+    val_dataset = tf.data.Dataset.list_files(validation_files_regexp, seed=SEED)
+    val_dataset = val_dataset.map(parse_image)
+
+    dataset = {"train": train_dataset, "val": val_dataset}
+
+    # -- Train Dataset --#
+    dataset['train'] = dataset['train'].map(load_image_train, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+    dataset['train'] = dataset['train'].shuffle(buffer_size=BUFFER_SIZE, seed=SEED)
+    dataset['train'] = dataset['train'].repeat()
+    dataset['train'] = dataset['train'].batch(BATCH_SIZE)
+    dataset['train'] = dataset['train'].prefetch(buffer_size=AUTOTUNE)
+
+    # -- Validation Dataset --#
+    dataset['val'] = dataset['val'].map(load_image_test)
+    dataset['val'] = dataset['val'].repeat()
+    dataset['val'] = dataset['val'].batch(BATCH_SIZE)
+    dataset['val'] = dataset['val'].prefetch(buffer_size=AUTOTUNE)
+
+    # TODO DEBUG remove
+    print(dataset['train'])
+    print(dataset['val'])
+
+    # how shuffle works: https://stackoverflow.com/a/53517848
+
+    # Visualize the content of our dataloaders to make sure everything is fine.
+    if check:
+        print("Displaying content of dataset to make sure everything is fine and exit...")
+        for image, mask in dataset['train'].take(1):
+            sample_image, sample_mask = image, mask
+        display_sample([sample_image[0], sample_mask[0]])
+        exit()
+
+    train_network()
+elif args.action == ACTION_PREDICT:
+    model.load_weights(H5_NETWORK_MODEL_FNAME)
+    image_path="./dataset_pet/images/training/Abyssinian_11.jpg"
+    img0 = image.load_img(image_path, target_size=(IMG_SIZE, IMG_SIZE))
+    # plt.imshow(img0)
+    img = np.expand_dims(img0, axis=0)
+    inference = model.predict(img)
+    pred_mask = create_mask(inference)
+    print(type(pred_mask))
+    display_sample([img0, pred_mask[0]],
+                   ['Input Image', 'Predicted Mask'])
+    plt.show()
+elif args.action == ACTION_SUMMARY:
+    model.summary()
 
 print("Program terminated correctly.")

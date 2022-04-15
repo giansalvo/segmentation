@@ -140,3 +140,5 @@ GitHub.sublime-settings
 *.jpg
 *.jpeg
 *.png
+logs/
+.idea/
