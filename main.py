@@ -53,7 +53,9 @@ FEXT_JPEG = "*.jpg"
 AUTOTUNE = tf.data.experimental.AUTOTUNE
 
 # DEFAULT PARAMETERS
-H5_NETWORK_MODEL_FNAME = 'best_model_unet.h5'
+WEIGHTS_FNAME_DEFAULT = 'unet_weights.h5'
+OUTPUT_IMAGE_FNAME = 'image_segm.jpg'
+
 # important for reproducibility
 # this allows to generate the same random numbers
 SEED = 42
@@ -80,8 +82,10 @@ DATASET_TRAIN_SUBDIR = "training"
 DATASET_VAL_SUBDIR = "validation"
 LOGS_DIR = "logs"
 
-# default parameters
+# global variables
 check = False
+weights_fname = WEIGHTS_FNAME_DEFAULT
+output_fname = OUTPUT_IMAGE_FNAME
 
 # COPYRIGHT NOTICE AND PROGRAM VERSION
 COPYRIGHT_NOTICE = "Copyright (C) 2022 Giansalvo Gusinu <profgusinu@gmail.com>"
@@ -372,13 +376,15 @@ def train_network():
         # if no accuracy improvements we can stop the training directly
         tf.keras.callbacks.EarlyStopping(patience=10, verbose=1),
         # to save checkpoints
-        tf.keras.callbacks.ModelCheckpoint(H5_NETWORK_MODEL_FNAME, verbose=1, save_best_only=True, save_weights_only=True)
+        tf.keras.callbacks.ModelCheckpoint(H5_NETWORK_MODEL_FNAME, verbose=1, save_best_only=True,
+                                           save_weights_only=True)
     ]
     model_history = model.fit(dataset['train'], epochs=EPOCHS,
-                            steps_per_epoch=STEPS_PER_EPOCH,
-                            validation_steps=VALIDATION_STEPS,
-                            validation_data=dataset['val'],
-                            callbacks=callbacks)
+                              steps_per_epoch=STEPS_PER_EPOCH,
+                              validation_steps=VALIDATION_STEPS,
+                              validation_data=dataset['val'],
+                              callbacks=callbacks)
+
 
 class DisplayCallback(tf.keras.callbacks.Callback):
     def on_epoch_end(self, epoch, logs=None):
@@ -391,123 +397,161 @@ class DisplayCallback(tf.keras.callbacks.Callback):
 #########################
 # MAIN STARTS HERE
 #########################
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger('gians')
+def main():
+    # create logger
+    logger = logging.getLogger('gians')
+    logger.setLevel(logging.DEBUG)
+    # create console handler and set level to debug
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.DEBUG)
+    # create formatter
+    formatter = logging.Formatter('%(asctime)s-%(name)s-%(levelname)s:%(message)s')
+    # add formatter to ch
+    ch.setFormatter(formatter)
+    # add ch to logger
+    logger.addHandler(ch)
+    logger.info("Starting")
 
-parser = argparse.ArgumentParser(
-    description=COPYRIGHT_NOTICE,
-    epilog="Examples:\n"
-           "         $python %(prog)s summary\n"
-           "\n"
-           "         $python %(prog)s train -r dataset_dir -w weigth_file.h5\n"
-           "         $python %(prog)s train -r dataset_dir -w weigth_file.h5 --check\n"
-           "\n"
-           "         $python %(prog)s predict -i image.jpg -w weigth_file.h5 -o image_segm.png\n",
-    formatter_class=argparse.RawTextHelpFormatter)
-parser.add_argument('--version', action='version', version='%(prog)s v.' + PROGRAM_VERSION)
-group = parser.add_mutually_exclusive_group()
-group.add_argument("-v", "--verbose", action="store_true")
-group.add_argument("-q", "--quiet", action="store_true")
-parser.add_argument("action", help="The action to perform: "
-                                   + ACTION_TRAIN + ", " + ACTION_PREDICT + ", " + ACTION_SUMMARY , 
-                    choices=(ACTION_TRAIN, ACTION_PREDICT, ACTION_SUMMARY))
-parser.add_argument('--check', dest='check', default=False, action='store_true',
-                    help="Display images to check dataset is ok")
-parser.add_argument('-r', '--dataset_root_dir', required=False, help="The root directory for images")
-parser.add_argument("-o", "--output_file", required=False, help="The output file with the segmented image")
-parser.add_argument("-w", "--weigth_file", required=False, help="The weigth file to be loaded/saved")
+    parser = argparse.ArgumentParser(
+        description=COPYRIGHT_NOTICE,
+        epilog="Examples:\n"
+               "         $python %(prog)s summary\n"
+               "\n"
+               "         $python %(prog)s train -r dataset_dir -w weigths_file.h5\n"
+               "         $python %(prog)s train -r dataset_dir -w weigths_file.h5 --check\n"
+               "\n"
+               "         $python %(prog)s predict -i image.jpg -w weigths_file.h5 -o image_segm.png\n",
+        formatter_class=argparse.RawTextHelpFormatter)
+    parser.add_argument('--version', action='version', version='%(prog)s v.' + PROGRAM_VERSION)
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("-v", "--verbose", action="store_true")
+    group.add_argument("-q", "--quiet", action="store_true")
+    parser.add_argument("action", help="The action to perform: "
+                                       + ACTION_TRAIN + ", " + ACTION_PREDICT + ", " + ACTION_SUMMARY,
+                        choices=(ACTION_TRAIN, ACTION_PREDICT, ACTION_SUMMARY))
+    parser.add_argument('--check', dest='check', default=False, action='store_true',
+                        help="Display some images from dataset before training to check that dataset is ok")
+    parser.add_argument('-r', '--dataset_root_dir', required=False, help="The root directory for images")
+    parser.add_argument("-w", "--weigths_file", required=False, default=WEIGHTS_FNAME_DEFAULT,
+                        help="The weigths file to be loaded/saved")
+    parser.add_argument("-i", "--input_image", required=False, help="The input file to be segmented")
+    parser.add_argument("-o", "--output_file", required=False, default=OUTPUT_IMAGE_FNAME,
+                        help="The output file with the segmented image")
 
-args = parser.parse_args()
+    args = parser.parse_args()
 
-print(COPYRIGHT_NOTICE)
-print("Program started.")
-print(f"Tensorflow ver. {tf.__version__}")
+    print(COPYRIGHT_NOTICE)
+    print("Program started.")
+    print(f"Tensorflow ver. {tf.__version__}")
 
-check = args.check
+    check = args.check
+    weights_fname = args.weigths_file
+    output_fname = args.output_file
 
-model = create_model_UNet()
+    logger.debug("weights_fname=" + weights_fname)
+    logger.debug("output_fname=" + output_fname)
 
-if args.action == ACTION_TRAIN:
-    if args.dataset_root_dir is None:
-        dataset_images_path = DATASET_ROOT_DIR + "/" + DATASET_IMG_SUBDIR
-    else:
-        dataset_images_path = args.dataset_root_dir + "/" + DATASET_IMG_SUBDIR
-    training_files_regexp = dataset_images_path + "/" + DATASET_TRAIN_SUBDIR + "/" + FEXT_JPEG
-    validation_files_regexp = dataset_images_path + "/" + DATASET_VAL_SUBDIR + "/" + FEXT_JPEG
+    model = create_model_UNet()
+    model.save('model_saved/unet_model')
 
-    logger.debug("check=" + str(check))
-    logger.debug("dataset_images_path=" + dataset_images_path)
+    if args.action == ACTION_TRAIN:
+        if args.dataset_root_dir is None:
+            dataset_images_path = DATASET_ROOT_DIR + "/" + DATASET_IMG_SUBDIR
+        else:
+            dataset_images_path = args.dataset_root_dir + "/" + DATASET_IMG_SUBDIR
+        training_files_regexp = dataset_images_path + "/" + DATASET_TRAIN_SUBDIR + "/" + FEXT_JPEG
+        validation_files_regexp = dataset_images_path + "/" + DATASET_VAL_SUBDIR + "/" + FEXT_JPEG
 
-    logger.debug("TRAINSET=" + training_files_regexp)
-    # Creating a source dataset
-    TRAINSET_SIZE = len(glob(training_files_regexp))
-    print(f"The Training Dataset contains {TRAINSET_SIZE} images.")
+        logger.debug("check=" + str(check))
+        logger.debug("dataset_images_path=" + dataset_images_path)
 
-    VALSET_SIZE = len(glob(validation_files_regexp))
-    print(f"The Validation Dataset contains {VALSET_SIZE} images.")
+        logger.debug("TRAINSET=" + training_files_regexp)
+        # Creating a source dataset
+        TRAINSET_SIZE = len(glob(training_files_regexp))
+        print(f"The Training Dataset contains {TRAINSET_SIZE} images.")
 
-    if TRAINSET_SIZE == 0 or VALSET_SIZE == 0:
-        print("ERROR: Training dataset and validation datasets must be not empty!")
-        exit()
+        VALSET_SIZE = len(glob(validation_files_regexp))
+        print(f"The Validation Dataset contains {VALSET_SIZE} images.")
 
-    STEPS_PER_EPOCH = TRAINSET_SIZE // BATCH_SIZE
-    VALIDATION_STEPS = VALSET_SIZE // BATCH_SIZE
+        if TRAINSET_SIZE == 0 or VALSET_SIZE == 0:
+            print("ERROR: Training dataset and validation datasets must be not empty!")
+            exit()
 
-    logger.debug("STEPS_PER_EPOCH=" + str(STEPS_PER_EPOCH))
-    logger.debug("VALIDATION_STEPS=" + str(VALIDATION_STEPS))
-    if STEPS_PER_EPOCH == 0:
-        print("ERROR: Not enough images for the training process!")
-        exit()
+        STEPS_PER_EPOCH = TRAINSET_SIZE // BATCH_SIZE
+        VALIDATION_STEPS = VALSET_SIZE // BATCH_SIZE
 
-    train_dataset = tf.data.Dataset.list_files(training_files_regexp, seed=SEED)
-    train_dataset = train_dataset.map(parse_image)
+        logger.debug("STEPS_PER_EPOCH=" + str(STEPS_PER_EPOCH))
+        logger.debug("VALIDATION_STEPS=" + str(VALIDATION_STEPS))
+        if STEPS_PER_EPOCH == 0:
+            print("ERROR: Not enough images for the training process!")
+            exit()
 
-    val_dataset = tf.data.Dataset.list_files(validation_files_regexp, seed=SEED)
-    val_dataset = val_dataset.map(parse_image)
+        train_dataset = tf.data.Dataset.list_files(training_files_regexp, seed=SEED)
+        train_dataset = train_dataset.map(parse_image)
 
-    dataset = {"train": train_dataset, "val": val_dataset}
+        val_dataset = tf.data.Dataset.list_files(validation_files_regexp, seed=SEED)
+        val_dataset = val_dataset.map(parse_image)
 
-    # -- Train Dataset --#
-    dataset['train'] = dataset['train'].map(load_image_train, num_parallel_calls=tf.data.experimental.AUTOTUNE)
-    dataset['train'] = dataset['train'].shuffle(buffer_size=BUFFER_SIZE, seed=SEED)
-    dataset['train'] = dataset['train'].repeat()
-    dataset['train'] = dataset['train'].batch(BATCH_SIZE)
-    dataset['train'] = dataset['train'].prefetch(buffer_size=AUTOTUNE)
+        dataset = {"train": train_dataset, "val": val_dataset}
 
-    # -- Validation Dataset --#
-    dataset['val'] = dataset['val'].map(load_image_test)
-    dataset['val'] = dataset['val'].repeat()
-    dataset['val'] = dataset['val'].batch(BATCH_SIZE)
-    dataset['val'] = dataset['val'].prefetch(buffer_size=AUTOTUNE)
+        # -- Train Dataset --#
+        dataset['train'] = dataset['train'].map(load_image_train, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+        dataset['train'] = dataset['train'].shuffle(buffer_size=BUFFER_SIZE, seed=SEED)
+        dataset['train'] = dataset['train'].repeat()
+        dataset['train'] = dataset['train'].batch(BATCH_SIZE)
+        dataset['train'] = dataset['train'].prefetch(buffer_size=AUTOTUNE)
 
-    # TODO DEBUG remove
-    print(dataset['train'])
-    print(dataset['val'])
+        # -- Validation Dataset --#
+        dataset['val'] = dataset['val'].map(load_image_test)
+        dataset['val'] = dataset['val'].repeat()
+        dataset['val'] = dataset['val'].batch(BATCH_SIZE)
+        dataset['val'] = dataset['val'].prefetch(buffer_size=AUTOTUNE)
 
-    # how shuffle works: https://stackoverflow.com/a/53517848
+        # TODO DEBUG remove
+        print(dataset['train'])
+        print(dataset['val'])
 
-    # Visualize the content of our dataloaders to make sure everything is fine.
-    if check:
-        print("Displaying content of dataset to make sure everything is fine and exit...")
-        for image, mask in dataset['train'].take(1):
-            sample_image, sample_mask = image, mask
-        display_sample([sample_image[0], sample_mask[0]])
-        exit()
+        # how shuffle works: https://stackoverflow.com/a/53517848
 
-    train_network()
-elif args.action == ACTION_PREDICT:
-    model.load_weights(H5_NETWORK_MODEL_FNAME)
-    image_path="./dataset_pet/images/training/Abyssinian_11.jpg"
-    img0 = image.load_img(image_path, target_size=(IMG_SIZE, IMG_SIZE))
-    # plt.imshow(img0)
-    img = np.expand_dims(img0, axis=0)
-    inference = model.predict(img)
-    pred_mask = create_mask(inference)
-    print(type(pred_mask))
-    display_sample([img0, pred_mask[0]],
-                   ['Input Image', 'Predicted Mask'])
-    plt.show()
-elif args.action == ACTION_SUMMARY:
-    model.summary()
+        # Visualize the content of our dataloaders to make sure everything is fine.
+        if check:
+            print("Displaying content of dataset to make sure everything is fine and exit...")
+            for image, mask in dataset['train'].take(1):
+                sample_image, sample_mask = image, mask
+            display_sample([sample_image[0], sample_mask[0]])
+            exit()
 
-print("Program terminated correctly.")
+        train_network()
+    elif args.action == ACTION_PREDICT:
+        if args.input_image is None:
+            print("ERROR: missing input_image parameter")
+            exit()
+        else:
+            # image_path = "./dataset_pet/images/training/Abyssinian_11.jpg"
+            image_path = args.input_image
+
+        model.load_weights(weights_fname)
+        img0 = image.load_img(image_path, target_size=(IMG_SIZE, IMG_SIZE))
+        # plt.imshow(img0)
+        img = np.expand_dims(img0, axis=0)
+        inference = model.predict(img)
+        pred_mask = create_mask(inference)
+        if check:
+            display_sample([img0, pred_mask[0]],
+                           ['Input Image', 'Predicted Mask'])
+            plt.show()
+        else:
+            # save image to disk
+            # img = image.load_img(pred_mask[0])
+            # img.save("pippo.jpg")
+            print("Saving output segmented image to file: " + output_fname)
+            tf.keras.utils.save_img(output_fname, pred_mask[0])
+
+    elif args.action == ACTION_SUMMARY:
+        model.summary()
+
+    print("Program terminated correctly.")
+
+
+if __name__ == '__main__':
+    main()
