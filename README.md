@@ -1,5 +1,5 @@
 # Introduction
-This script implements a Convolutional Nneural Network (U-net) to perform the semantic segmentation of 2D images. The framework used is Keras by Tensorflow.
+This script implements a Convolutional Neural Network (U-net) to perform the semantic segmentation of 2D images. The framework used is Keras by Tensorflow.
 
 The type of data we are going to manipulate consist in:
 
@@ -44,7 +44,7 @@ $ pip install -r requirements.txt
 # Sintax
 Call the script with the appropriate parameters. To get help from the script just type:
 ```sh
-$ python gg_prepr.py -h
+$ python main.py -h
 
 usage: main.py [-h] [--version] [-v | -q] [--check] [-r DATASET_ROOT_DIR]
                [-w WEIGTHS_FILE] [-i INPUT_IMAGE] [-o OUTPUT_FILE]
@@ -74,7 +74,7 @@ optional arguments:
 
 ## Examples
 
-Create the network and show a summary of the structure to the standard output:
+Create the network and show a summary of the network's structure to the standard output:
 ```sh
 $ python main.py summary
 ```

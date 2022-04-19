@@ -536,16 +536,14 @@ def main():
         img = np.expand_dims(img0, axis=0)
         inference = model.predict(img)
         pred_mask = create_mask(inference)
+        # save image to disk
+        print("Saving output segmented image to file: " + output_fname)
+        tf.keras.utils.save_img(output_fname, pred_mask[0])
+        # if check is set, then display image to screen
         if check:
             display_sample([img0, pred_mask[0]],
                            ['Input Image', 'Predicted Mask'])
             plt.show()
-        else:
-            # save image to disk
-            # img = image.load_img(pred_mask[0])
-            # img.save("pippo.jpg")
-            print("Saving output segmented image to file: " + output_fname)
-            tf.keras.utils.save_img(output_fname, pred_mask[0])
 
     elif args.action == ACTION_SUMMARY:
         model.summary()
