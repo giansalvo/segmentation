@@ -94,6 +94,11 @@ $ python main.py predict -i image.jpg
 
 $ python main.py predict -i image.jpg -w weigths_file.h5 -o image_segm.jpg
 ```
+# Credits
+
+Project inspired and adapted from original code and article by Yann Leguilly:
+- https://yann-leguilly.gitlab.io/post/2019-12-14-tensorflow-tfdata-segmentation/
+- https://github.com/dhassault/tf-semantic-example
 
 # License
 

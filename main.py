@@ -28,10 +28,10 @@
 """
 import argparse
 import datetime
+import sys
 import os
 import logging
 from glob import glob
-from turtle import end_fill
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -54,7 +54,6 @@ AUTOTUNE = tf.data.experimental.AUTOTUNE
 
 # DEFAULT PARAMETERS
 WEIGHTS_FNAME_DEFAULT = 'unet_weights.h5'
-OUTPUT_IMAGE_FNAME = 'image_segm.jpg'
 
 # important for reproducibility
 # this allows to generate the same random numbers
@@ -85,7 +84,6 @@ LOGS_DIR = "logs"
 # global variables
 check = False
 weights_fname = WEIGHTS_FNAME_DEFAULT
-output_fname = OUTPUT_IMAGE_FNAME
 
 # COPYRIGHT NOTICE AND PROGRAM VERSION
 COPYRIGHT_NOTICE = "Copyright (C) 2022 Giansalvo Gusinu <profgusinu@gmail.com>"
@@ -365,7 +363,15 @@ def create_model_UNet():
     return model
 
 
-def train_network():
+class DisplayCallback(tf.keras.callbacks.Callback):
+    def on_epoch_end(self, epoch, logs=None):
+        clear_output(wait=True)
+        if check:
+            show_predictions()
+            print('\nSample Prediction after epoch {}\n'.format(epoch + 1))
+
+
+def train_network(network_model, images_dataset, steps_per_epoch, validation_steps):
     logdir = os.path.join(LOGS_DIR, datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
     tensorboard_callback = tf.keras.callbacks.TensorBoard(logdir, histogram_freq=1)
     callbacks = [
@@ -376,22 +382,17 @@ def train_network():
         # if no accuracy improvements we can stop the training directly
         tf.keras.callbacks.EarlyStopping(patience=10, verbose=1),
         # to save checkpoints
-        tf.keras.callbacks.ModelCheckpoint(H5_NETWORK_MODEL_FNAME, verbose=1, save_best_only=True,
-                                           save_weights_only=True)
+        tf.keras.callbacks.ModelCheckpoint(weights_fname, 
+                                        verbose=1,
+                                        save_best_only=True,
+                                        save_weights_only=True)
     ]
-    model_history = model.fit(dataset['train'], epochs=EPOCHS,
-                              steps_per_epoch=STEPS_PER_EPOCH,
-                              validation_steps=VALIDATION_STEPS,
-                              validation_data=dataset['val'],
-                              callbacks=callbacks)
-
-
-class DisplayCallback(tf.keras.callbacks.Callback):
-    def on_epoch_end(self, epoch, logs=None):
-        clear_output(wait=True)
-        if check:
-            show_predictions()
-            print('\nSample Prediction after epoch {}\n'.format(epoch + 1))
+    model_history = network_model.fit(images_dataset['train'], 
+                                epochs=EPOCHS,
+                                steps_per_epoch=steps_per_epoch,
+                                validation_steps=validation_steps,
+                                validation_data=images_dataset['val'],
+                                callbacks=callbacks)
 
 
 #########################
@@ -411,6 +412,11 @@ def main():
     # add ch to logger
     logger.addHandler(ch)
     logger.info("Starting")
+    
+    print("Program ver.: " + PROGRAM_VERSION)
+    print(COPYRIGHT_NOTICE)
+    print("Python ver.: " + sys.version)
+    print(f"Tensorflow ver. {tf.__version__}")
 
     parser = argparse.ArgumentParser(
         description=COPYRIGHT_NOTICE,
@@ -435,25 +441,18 @@ def main():
     parser.add_argument("-w", "--weigths_file", required=False, default=WEIGHTS_FNAME_DEFAULT,
                         help="The weigths file to be loaded/saved")
     parser.add_argument("-i", "--input_image", required=False, help="The input file to be segmented")
-    parser.add_argument("-o", "--output_file", required=False, default=OUTPUT_IMAGE_FNAME,
-                        help="The output file with the segmented image")
+    parser.add_argument("-o", "--output_file", required=False, help="The output file with the segmented image")
 
     args = parser.parse_args()
 
-    print(COPYRIGHT_NOTICE)
-    print("Program started.")
-    print(f"Tensorflow ver. {tf.__version__}")
-
     check = args.check
     weights_fname = args.weigths_file
-    output_fname = args.output_file
-
+    
     logger.debug("weights_fname=" + weights_fname)
-    logger.debug("output_fname=" + output_fname)
-
+    
+    # create the unet network architecture with keras
     model = create_model_UNet()
-    model.save('model_saved/unet_model')
-
+    
     if args.action == ACTION_TRAIN:
         if args.dataset_root_dir is None:
             dataset_images_path = DATASET_ROOT_DIR + "/" + DATASET_IMG_SUBDIR
@@ -521,24 +520,49 @@ def main():
             display_sample([sample_image[0], sample_mask[0]])
             exit()
 
-        train_network()
+  
+        train_network(model, dataset, STEPS_PER_EPOCH, VALIDATION_STEPS)
     elif args.action == ACTION_PREDICT:
         if args.input_image is None:
             print("ERROR: missing input_image parameter")
             exit()
         else:
-            # image_path = "./dataset_pet/images/training/Abyssinian_11.jpg"
-            image_path = args.input_image
+            input_fname = args.input_image
+
+        if args.output_file is None:
+            fn, fext = os.path.splitext(os.path.basename(input_fname))
+            output_fname = fn + "_segm" + fext
+            out_3map_fname = fn + "_3map" + fext
+        else:
+            output_fname = args.output_file
+            fn, fext = os.path.splitext(os.path.basename(output_fname))
+            out_3map_fname = fn + "_3map" + fext
+        logger.debug("output_fname=" + output_fname)
 
         model.load_weights(weights_fname)
-        img0 = image.load_img(image_path, target_size=(IMG_SIZE, IMG_SIZE))
+        img0 = tf.io.read_file(input_fname)
+        img0 = tf.image.decode_jpeg(img0, channels=3)
+        img0 = tf.image.resize(img0, [IMG_SIZE,IMG_SIZE])
         # plt.imshow(img0)
         img = np.expand_dims(img0, axis=0)
         inference = model.predict(img)
         pred_mask = create_mask(inference)
-        # save image to disk
-        print("Saving output segmented image to file: " + output_fname)
-        tf.keras.utils.save_img(output_fname, pred_mask[0])
+        # compute trimap output and save image to disk
+        img1 = pred_mask[0]
+        print("Saving trimap output segmented image to file: " + out_3map_fname)
+        img1 = tf.cast(img1, tf.uint8)
+        img1 = tf.image.encode_jpeg(img1)
+        tf.io.write_file(out_3map_fname, img1)
+        # compute visible output and save image to disk
+        img2 = pred_mask[0]
+        print("Saving visible output segmented image to file: " + output_fname)
+        x_max = tf.reduce_max(img2)
+        img2 = img2 * 255
+        img2 = img2 / x_max
+        img2 = tf.cast(img2, tf.uint8)
+        img2 = tf.image.encode_jpeg(img2)
+        tf.io.write_file(output_fname, img2)
+
         # if check is set, then display image to screen
         if check:
             display_sample([img0, pred_mask[0]],
@@ -546,7 +570,9 @@ def main():
             plt.show()
 
     elif args.action == ACTION_SUMMARY:
+        # print network's structure summary and save hole architecture plus weigths 
         model.summary()
+        model.save('model_saved/unet_model')    # TODO HARDCODED
 
     print("Program terminated correctly.")
 
