@@ -1,10 +1,10 @@
 # Introduction
 This script implements a Convolutional Neural Network (U-net) to perform the semantic segmentation of 2D images. The framework used is Keras by Tensorflow.
 
-The type of data we are going to manipulate consist in:
+The type of data that we are going to manipulate consists in:
 
-    a jpeg image with 3 channels (RGB)
-    a png mask with 1 channel (for each pixel we have 1 true class over 150 possible)
+    - a jpeg image with 3 channels (RGB)
+    - a png mask with 1 channel (for each pixel we have 1 true class over 150 possible)
 
 You can find useful information by reading the official tensorflow tutorials:
 
@@ -13,10 +13,25 @@ You can find useful information by reading the official tensorflow tutorials:
 
 The directories that contain the images of the dataset must be organized in the following hierarchy, where training and corresponding validating images must have the same filename:
 
-    ./dataset/images/training/*.jpg <-- images used for training
-    ./dataset/images/validation/*.jpg <-- images used for validation
-    ./dataset/annotations/training/*.png <-- trimap images for training
-    ./dataset/annotations/validation/*.png <-- trimap images for validarion
+```sh
+    dataset/
+        |
+        |- images/
+        |        |
+        |        |- training/
+        |        |      |- *.jpg <-- images used for training
+        |        |      
+        |        |- validation/
+        |               |- *.jpg <-- images used for validation
+        |
+        |- annotations/
+                 |
+                 |- training/
+                 |      |- *.png <-- trimap images used for training
+                 |      
+                 |- validation/
+                        |- *.png <-- trimap images used for validation
+```
 
 The actions that can be performed by the script are:
 - train;
@@ -45,7 +60,10 @@ $ pip install -r requirements.txt
 Call the script with the appropriate parameters. To get help from the script just type:
 ```sh
 $ python main.py -h
+```
 
+This is the help message that you will get:
+```sh
 usage: main.py [-h] [--version] [-v | -q] [--check] [-r DATASET_ROOT_DIR]
                [-w WEIGTHS_FILE] [-i INPUT_IMAGE] [-o OUTPUT_FILE]
                {train,predict,summary}
@@ -74,21 +92,21 @@ optional arguments:
 
 ## Examples
 
-Create the network and show a summary of the network's structure to the standard output:
+Show a summary of the network's structure to the standard output and save the model to disk:
 ```sh
 $ python main.py summary
 ```
 
 Train the network:
 ```sh
-$ $python main.py train
+$ python main.py train
 
-$ $python main.py train -r dataset_dir -w weigths_file.h5
+$ python main.py train -r dataset_dir -w weigths_file.h5
 
 $ python main.py train -r dataset_dir -w weigths_file.h5 --check
 ```
 
-Make the network predict a segmented image from a given input image and the weights:
+Make the network predict a segmented image given an input image and the weights file:
 ```sh
 $ python main.py predict -i image.jpg
 
@@ -96,7 +114,7 @@ $ python main.py predict -i image.jpg -w weigths_file.h5 -o image_segm.jpg
 ```
 # Credits
 
-Project inspired and adapted from original code and article by Yann Leguilly:
+This project was inspired and adapted from original code and article by Yann Leguilly:
 - https://yann-leguilly.gitlab.io/post/2019-12-14-tensorflow-tfdata-segmentation/
 - https://github.com/dhassault/tf-semantic-example
 
