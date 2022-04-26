@@ -440,7 +440,7 @@ def main():
                 "         $python %(prog)s predict -i image.jpg -w weigths_file.h5 -o image_segm.png\n",
         formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument('--version', action='version', version='%(prog)s v.' + PROGRAM_VERSION)
-    group = parser.add_mutually_exclusive_group()
+    #group = parser.add_mutually_exclusive_group()
     #group.add_argument("-v", "--verbose", action="store_true")
     #group.add_argument("-q", "--quiet", action="store_true")
     parser.add_argument("action", help="The action to perform: "
