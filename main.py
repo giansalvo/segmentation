@@ -28,8 +28,10 @@
 """
 import argparse
 import datetime
+import random
 import sys
 import os
+import shutil
 import logging
 from glob import glob
 
@@ -42,10 +44,11 @@ from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.preprocessing import image
 
 # CONSTANTS
+ACTION_SPLIT = "split"
 ACTION_TRAIN = "train"
 ACTION_PREDICT = "predict"
 ACTION_SUMMARY = "summary"
-FEXT_PNG = "*.png"
+PNG_EXT = ".png"
 FEXT_JPEG = "*.jpg"
 
 # For more information about autotune:
@@ -60,7 +63,7 @@ WEIGHTS_FNAME_DEFAULT = 'unet_weights.h5'
 SEED = 42
 
 # Image size that we are going to use
-IMG_SIZE = 128  # TODO CHANGE TO 300
+IMG_SIZE = 128
 # Our images are RGB (3 channels)
 N_CHANNELS = 3
 # Scene Parsing has 150 classes + `not labeled`
@@ -75,10 +78,13 @@ BUFFER_SIZE = 1000
 EPOCHS = 20  # gians original it was 20
 
 # gians PD folders structure
-DATASET_ROOT_DIR = "./dataset"
+dataset_root_dir = "./dataset"
 DATASET_IMG_SUBDIR = "images"
+DATASET_ANNOT_SUBDIR = "annotations"
 DATASET_TRAIN_SUBDIR = "training"
 DATASET_VAL_SUBDIR = "validation"
+DATASET_TEST_SUBDIR = "test"
+PATH_SAVED_MODEL = 'model_saved/unet_model'
 LOGS_DIR = "logs"
 
 # global variables
@@ -87,7 +93,7 @@ weights_fname = WEIGHTS_FNAME_DEFAULT
 
 # COPYRIGHT NOTICE AND PROGRAM VERSION
 COPYRIGHT_NOTICE = "Copyright (C) 2022 Giansalvo Gusinu <profgusinu@gmail.com>"
-PROGRAM_VERSION = "0.1"
+PROGRAM_VERSION = "1.0"
 
 
 # For each images of our dataset, we will apply some operations wrapped into
@@ -115,8 +121,8 @@ def parse_image(img_path: str) -> dict:
     # Its corresponding annotation path is:
     # .../trainset/annotations/training/ADE_train_00000001.png
     print("Image path: " + img_path)
-    mask_path = tf.strings.regex_replace(img_path, "images", "annotations")
-    mask_path = tf.strings.regex_replace(mask_path, "jpg", "png")
+    mask_path = tf.strings.regex_replace(img_path, DATASET_IMG_SUBDIR, DATASET_ANNOT_SUBDIR)
+    mask_path = tf.strings.regex_replace(mask_path, "jpg", "png")   # TODO HARDCODED
     mask = tf.io.read_file(mask_path)
     # The masks contain a class index for each pixels
     mask = tf.image.decode_png(mask, channels=1)
@@ -415,33 +421,42 @@ def main():
     
     print("Program ver.: " + PROGRAM_VERSION)
     print(COPYRIGHT_NOTICE)
-    print("Python ver.: " + sys.version)
-    print(f"Tensorflow ver. {tf.__version__}")
+    executable = os.path.realpath(sys.executable)
+    logger.info("Python ver.: " + sys.version)
+    logger.info("Python executable: " + str(executable))
+    logger.info("Tensorflow ver. " + str(tf.__version__))
 
     parser = argparse.ArgumentParser(
         description=COPYRIGHT_NOTICE,
-        epilog="Examples:\n"
-               "         $python %(prog)s summary\n"
-               "\n"
-               "         $python %(prog)s train -r dataset_dir -w weigths_file.h5\n"
-               "         $python %(prog)s train -r dataset_dir -w weigths_file.h5 --check\n"
-               "\n"
-               "         $python %(prog)s predict -i image.jpg -w weigths_file.h5 -o image_segm.png\n",
+        epilog = "Examples:\n"
+                "         $python %(prog)s split -ir initial_root_dir -dr dataset_root_dir\n"
+                "         $python %(prog)s split -ir initial_root_dir -dr dataset_root_dir -s 0.4 0.3 0.3\n"
+                "\n"
+                "         $python %(prog)s summary\n"
+                "\n"
+                "         $python %(prog)s train -dr dataset_dir\n"
+                "         $python %(prog)s train -dr dataset_dir -w weigths_file.h5 --check\n"
+                "\n"
+                "         $python %(prog)s predict -i image.jpg -w weigths_file.h5 -o image_segm.png\n",
         formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument('--version', action='version', version='%(prog)s v.' + PROGRAM_VERSION)
     group = parser.add_mutually_exclusive_group()
-    group.add_argument("-v", "--verbose", action="store_true")
-    group.add_argument("-q", "--quiet", action="store_true")
+    #group.add_argument("-v", "--verbose", action="store_true")
+    #group.add_argument("-q", "--quiet", action="store_true")
     parser.add_argument("action", help="The action to perform: "
-                                       + ACTION_TRAIN + ", " + ACTION_PREDICT + ", " + ACTION_SUMMARY,
-                        choices=(ACTION_TRAIN, ACTION_PREDICT, ACTION_SUMMARY))
+                                       + ACTION_SPLIT + ", " + ACTION_TRAIN + ", " + ACTION_PREDICT + ", " + ACTION_SUMMARY,
+                        choices=(ACTION_SPLIT, ACTION_TRAIN, ACTION_PREDICT, ACTION_SUMMARY))
     parser.add_argument('--check', dest='check', default=False, action='store_true',
                         help="Display some images from dataset before training to check that dataset is ok")
-    parser.add_argument('-r', '--dataset_root_dir', required=False, help="The root directory for images")
+    parser.add_argument('-ir', '--initial_root_dir', required=False, help="The initial root directory of images and trimaps")
+    parser.add_argument('-dr', '--dataset_root_dir', required=False, help="The root directory of the dataset")
     parser.add_argument("-w", "--weigths_file", required=False, default=WEIGHTS_FNAME_DEFAULT,
                         help="The weigths file to be loaded/saved")
     parser.add_argument("-i", "--input_image", required=False, help="The input file to be segmented")
     parser.add_argument("-o", "--output_file", required=False, help="The output file with the segmented image")
+    parser.add_argument("-s", "--split_percentage", nargs=3, metavar=('train_p', 'validation_p', 'test_p' ),
+                        type=float, default=[0.4, 0.3, 0.3],
+                        help="The percentage of images to be copied respectively to train/validation/test set")
 
     args = parser.parse_args()
 
@@ -455,11 +470,11 @@ def main():
     
     if args.action == ACTION_TRAIN:
         if args.dataset_root_dir is None:
-            dataset_images_path = DATASET_ROOT_DIR + "/" + DATASET_IMG_SUBDIR
+            dataset_images_path = os.path.join(dataset_root_dir, DATASET_IMG_SUBDIR)
         else:
-            dataset_images_path = args.dataset_root_dir + "/" + DATASET_IMG_SUBDIR
-        training_files_regexp = dataset_images_path + "/" + DATASET_TRAIN_SUBDIR + "/" + FEXT_JPEG
-        validation_files_regexp = dataset_images_path + "/" + DATASET_VAL_SUBDIR + "/" + FEXT_JPEG
+            dataset_images_path =  os.path.join(args.dataset_root_dir, DATASET_IMG_SUBDIR)
+        training_files_regexp =  os.path.join(dataset_images_path, DATASET_TRAIN_SUBDIR, FEXT_JPEG)
+        validation_files_regexp = os.path.join(dataset_images_path, DATASET_VAL_SUBDIR, FEXT_JPEG)
 
         logger.debug("check=" + str(check))
         logger.debug("dataset_images_path=" + dataset_images_path)
@@ -506,9 +521,8 @@ def main():
         dataset['val'] = dataset['val'].batch(BATCH_SIZE)
         dataset['val'] = dataset['val'].prefetch(buffer_size=AUTOTUNE)
 
-        # TODO DEBUG remove
-        print(dataset['train'])
-        print(dataset['val'])
+        logger.debug(dataset['train'])
+        logger.debug(dataset['val'])
 
         # how shuffle works: https://stackoverflow.com/a/53517848
 
@@ -572,7 +586,108 @@ def main():
     elif args.action == ACTION_SUMMARY:
         # print network's structure summary and save hole architecture plus weigths 
         model.summary()
-        model.save('model_saved/unet_model')    # TODO HARDCODED
+        model.save(PATH_SAVED_MODEL)
+    
+    elif args.action == ACTION_SPLIT:
+        # split images and trimap in train/validate/test by creating the dataset folder hierarchy
+        train_p = args.split_percentage[0]
+        val_p = args.split_percentage[1]
+        test_p = args.split_percentage[2]
+        if train_p + val_p + test_p != 1:
+            print("ERROR: the sum of percentages parameters must give 1")
+            print(args.split_percentage)
+            exit()
+        if args.initial_root_dir is None:
+            print("ERROR: you must specify the initial_root_dir parameter")
+            exit()
+        initial_root_dir = args.initial_root_dir
+        if args.dataset_root_dir is None:
+            print("ERROR: you must specify the dataset_root_dir parameter")
+            exit()
+        dataset_root_dir = args.dataset_root_dir
+        if os.path.isdir(dataset_root_dir):
+            print("ERROR: directory" + str(dataset_root_dir) + " already exists")
+            exit()
+        
+        initial_images_dir = os.path.join(initial_root_dir, DATASET_IMG_SUBDIR)
+        initial_annotations_dir = os.path.join(initial_root_dir, DATASET_ANNOT_SUBDIR)
+        files_regexp = os.path.join(initial_images_dir, FEXT_JPEG)
+        logger.debug(str(files_regexp))
+  
+        filenames = list(glob(files_regexp))
+        ntot = len(filenames)
+        ntrain = round(ntot * train_p)
+        nvalid = round(ntot * val_p)
+        ntest  = round(ntot * test_p)
+        print("Number of images found: ", ntot)
+        if ntot == 0:
+            print("ERROR: no images found with the following serch pattern")
+            print(str(files_regexp))
+            exit()
+        
+        print("Creating dataset directory structure...")
+        os.mkdir(dataset_root_dir)
+        # IMAGES SUBDIRS
+        temp_root = os.path.join(dataset_root_dir, DATASET_IMG_SUBDIR)
+        os.mkdir(temp_root)
+        temp = os.path.join(temp_root, DATASET_TRAIN_SUBDIR)
+        os.mkdir(temp)
+        temp = os.path.join(temp_root, DATASET_VAL_SUBDIR)
+        os.mkdir(temp)
+        temp = os.path.join(temp_root, DATASET_TEST_SUBDIR)
+        os.mkdir(temp)
+        # ANNOTATIONS SUBDIRS
+        temp_root = os.path.join(dataset_root_dir, DATASET_ANNOT_SUBDIR)
+        os.mkdir(temp_root)
+        temp = os.path.join(temp_root, DATASET_TRAIN_SUBDIR)
+        os.mkdir(temp)
+        temp = os.path.join(temp_root, DATASET_VAL_SUBDIR)
+        os.mkdir(temp)
+        temp = os.path.join(temp_root, DATASET_TEST_SUBDIR)
+        os.mkdir(temp)
+        print("Train set: " + str(ntrain) + 
+            " - validation set: " + str(nvalid) +
+            " - test set: " +str(ntest))
+        logger.debug("first image: " + filenames[0])
+
+        random.seed(SEED)
+        indexes = random.sample(range(ntot), ntot)
+        # for i in range(10):
+        #     j = indexes[i]
+        #     print(str(j) + " - " + filenames[j])
+
+        # TRAINING DATASET
+        print("Copying images and trimaps of training set...")
+        img_dir = os.path.join(dataset_root_dir, DATASET_IMG_SUBDIR, DATASET_TRAIN_SUBDIR)
+        annot_dir = os.path.join(dataset_root_dir, DATASET_ANNOT_SUBDIR, DATASET_TRAIN_SUBDIR)
+        for i in range(ntrain):
+            j = indexes[i]
+            shutil.copy2(filenames[j], img_dir)
+            fn, _ = os.path.splitext(os.path.basename(filenames[j]))
+            fn = os.path.join(initial_annotations_dir, fn + PNG_EXT)
+            shutil.copy2(fn, annot_dir)
+
+        # VALIDATION DATASET
+        print("Copying images and trimaps of validation set...")
+        img_dir = os.path.join(dataset_root_dir, DATASET_IMG_SUBDIR, DATASET_VAL_SUBDIR)
+        annot_dir = os.path.join(dataset_root_dir, DATASET_ANNOT_SUBDIR, DATASET_VAL_SUBDIR)
+        for i in range(nvalid):
+            j = indexes[ntrain + i]
+            shutil.copy2(filenames[j], img_dir)
+            fn, _ = os.path.splitext(os.path.basename(filenames[j]))
+            fn = os.path.join(initial_annotations_dir, fn + PNG_EXT)
+            shutil.copy2(fn, annot_dir)
+
+        # TEST DATASET
+        print("Copying images and trimaps of test set...")
+        img_dir = os.path.join(dataset_root_dir, DATASET_IMG_SUBDIR, DATASET_TEST_SUBDIR)
+        annot_dir = os.path.join(dataset_root_dir, DATASET_ANNOT_SUBDIR, DATASET_TEST_SUBDIR)
+        for i in range(ntest):
+            j = indexes[ntrain + nvalid + i] 
+            shutil.copy2(filenames[j], img_dir)
+            fn, _ = os.path.splitext(os.path.basename(filenames[j]))
+            fn = os.path.join(initial_annotations_dir, fn + PNG_EXT)
+            shutil.copy2(fn, annot_dir)
 
     print("Program terminated correctly.")
 
