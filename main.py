@@ -372,7 +372,7 @@ def create_model_UNet():
 class DisplayCallback(tf.keras.callbacks.Callback):
     def on_epoch_end(self, epoch, logs=None):
         clear_output(wait=True)
-        if check:
+        if check:   # TODO BUG this is always False
             show_predictions()
             print('\nSample Prediction after epoch {}\n'.format(epoch + 1))
 
@@ -399,7 +399,48 @@ def train_network(network_model, images_dataset, steps_per_epoch, validation_ste
                                 validation_steps=validation_steps,
                                 validation_data=images_dataset['val'],
                                 callbacks=callbacks)
+def read_image(image_path):
+    img0 = tf.io.read_file(image_path)
+    img0 = tf.image.decode_jpeg(img0, channels=3)
+    img0 = tf.image.resize(img0, [IMG_SIZE,IMG_SIZE])
+    return img0
 
+
+def infer(model, image_tensor):
+    img = np.expand_dims(image_tensor, axis=0)
+    predictions = model.predict(img)
+    predictions = create_mask(predictions)
+    return predictions[0]
+
+
+# def decode_segmentation_masks(mask, colormap, n_classes):
+#     r = np.zeros_like(mask).astype(np.uint8)
+#     g = np.zeros_like(mask).astype(np.uint8)
+#     b = np.zeros_like(mask).astype(np.uint8)
+#     for l in range(0, n_classes):
+#         idx = mask == l
+#         r[idx] = colormap[l, 0]
+#         g[idx] = colormap[l, 1]
+#         b[idx] = colormap[l, 2]
+#     rgb = np.stack([r, g, b], axis=2)
+#     return rgb
+
+
+# def get_overlay(image, colored_mask):
+#     image = tf.keras.preprocessing.image.array_to_img(image)
+#     image = np.array(image).astype(np.uint8)
+#     overlay = cv2.addWeighted(image, 0.35, colored_mask, 0.65, 0)
+#     return overlay
+
+
+def plot_samples_matplotlib(display_list, figsize=(5, 3)):
+    _, axes = plt.subplots(nrows=1, ncols=len(display_list), figsize=figsize)
+    for i in range(len(display_list)):
+        if display_list[i].shape[-1] == 3:
+            axes[i].imshow(tf.keras.preprocessing.image.array_to_img(display_list[i]))
+        else:
+            axes[i].imshow(display_list[i])
+    plt.show()
 
 #########################
 # MAIN STARTS HERE
@@ -528,11 +569,10 @@ def main():
 
         # Visualize the content of our dataloaders to make sure everything is fine.
         if check:
-            print("Displaying content of dataset to make sure everything is fine and exit...")
+            print("Displaying content of dataset to make sure everything is fine...")
             for image, mask in dataset['train'].take(1):
                 sample_image, sample_mask = image, mask
-            display_sample([sample_image[0], sample_mask[0]])
-            exit()
+            plot_samples_matplotlib([sample_image[0], sample_mask[0]])
 
   
         train_network(model, dataset, STEPS_PER_EPOCH, VALIDATION_STEPS)
@@ -544,44 +584,39 @@ def main():
             input_fname = args.input_image
 
         if args.output_file is None:
-            fn, fext = os.path.splitext(os.path.basename(input_fname))
-            output_fname = fn + "_segm" + fext
-            out_3map_fname = fn + "_3map" + fext
+            output_fname = input_fname
         else:
             output_fname = args.output_file
-            fn, fext = os.path.splitext(os.path.basename(output_fname))
-            out_3map_fname = fn + "_3map" + fext
+        fn, fext = os.path.splitext(os.path.basename(output_fname))
+        output_fname = fn + "_segm" + fext
+        out_3map_fname = fn + "_3map" + fext
+        out_cmap_fname = fn + "_cmap" + fext
         logger.debug("output_fname=" + output_fname)
 
         model.load_weights(weights_fname)
-        img0 = tf.io.read_file(input_fname)
-        img0 = tf.image.decode_jpeg(img0, channels=3)
-        img0 = tf.image.resize(img0, [IMG_SIZE,IMG_SIZE])
-        # plt.imshow(img0)
-        img = np.expand_dims(img0, axis=0)
-        inference = model.predict(img)
-        pred_mask = create_mask(inference)
+
+        img0 = read_image(input_fname)
+        
+        prediction = infer(model=model, image_tensor=img0)
+        
         # compute trimap output and save image to disk
-        img1 = pred_mask[0]
         print("Saving trimap output segmented image to file: " + out_3map_fname)
-        img1 = tf.cast(img1, tf.uint8)
+        img1 = tf.cast(prediction, tf.uint8)
         img1 = tf.image.encode_jpeg(img1)
         tf.io.write_file(out_3map_fname, img1)
+
         # compute visible output and save image to disk
-        img2 = pred_mask[0]
+        img2 = prediction
         print("Saving visible output segmented image to file: " + output_fname)
         x_max = tf.reduce_max(img2)
         img2 = img2 * 255
         img2 = img2 / x_max
-        img2 = tf.cast(img2, tf.uint8)
-        img2 = tf.image.encode_jpeg(img2)
-        tf.io.write_file(output_fname, img2)
-
+        jpeg = tf.image.encode_jpeg(tf.cast(img2, tf.uint8))
+        tf.io.write_file(output_fname, jpeg)
+        
         # if check is set, then display image to screen
         if check:
-            display_sample([img0, pred_mask[0]],
-                           ['Input Image', 'Predicted Mask'])
-            plt.show()
+            plot_samples_matplotlib([img0, prediction])
 
     elif args.action == ACTION_SUMMARY:
         # print network's structure summary and save hole architecture plus weigths 
@@ -652,10 +687,7 @@ def main():
 
         random.seed(SEED)
         indexes = random.sample(range(ntot), ntot)
-        # for i in range(10):
-        #     j = indexes[i]
-        #     print(str(j) + " - " + filenames[j])
-
+        
         # TRAINING DATASET
         print("Copying images and trimaps of training set...")
         img_dir = os.path.join(dataset_root_dir, DATASET_IMG_SUBDIR, DATASET_TRAIN_SUBDIR)
