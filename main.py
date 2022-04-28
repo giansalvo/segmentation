@@ -75,7 +75,7 @@ BATCH_SIZE = 32
 # https://stackoverflow.com/questions/46444018/meaning-of-buffer-size-in-dataset-map-dataset-prefetch-and-dataset-shuffle
 BUFFER_SIZE = 1000
 
-EPOCHS = 20  # gians original it was 20
+EPOCHS = 20
 
 # gians PD folders structure
 dataset_root_dir = "./dataset"
@@ -377,7 +377,7 @@ class DisplayCallback(tf.keras.callbacks.Callback):
             print('\nSample Prediction after epoch {}\n'.format(epoch + 1))
 
 
-def train_network(network_model, images_dataset, steps_per_epoch, validation_steps):
+def train_network(network_model, images_dataset, epochs, steps_per_epoch, validation_steps):
     logdir = os.path.join(LOGS_DIR, datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
     tensorboard_callback = tf.keras.callbacks.TensorBoard(logdir, histogram_freq=1)
     callbacks = [
@@ -394,7 +394,7 @@ def train_network(network_model, images_dataset, steps_per_epoch, validation_ste
                                         save_weights_only=True)
     ]
     model_history = network_model.fit(images_dataset['train'], 
-                                epochs=EPOCHS,
+                                epochs=epochs,
                                 steps_per_epoch=steps_per_epoch,
                                 validation_steps=validation_steps,
                                 validation_data=images_dataset['val'],
@@ -446,6 +446,7 @@ def plot_samples_matplotlib(display_list, figsize=(5, 3)):
 # MAIN STARTS HERE
 #########################
 def main():
+    global weights_fname
     # create logger
     logger = logging.getLogger('gians')
     logger.setLevel(logging.DEBUG)
@@ -498,11 +499,13 @@ def main():
     parser.add_argument("-s", "--split_percentage", nargs=3, metavar=('train_p', 'validation_p', 'test_p' ),
                         type=float, default=[0.4, 0.3, 0.3],
                         help="The percentage of images to be copied respectively to train/validation/test set")
+    parser.add_argument("-e", "--epochs", required=False, default=EPOCHS, type=int, help="The number of epochs during the training")
 
     args = parser.parse_args()
 
     check = args.check
     weights_fname = args.weigths_file
+    epochs = args.epochs
     
     logger.debug("weights_fname=" + weights_fname)
     
@@ -519,8 +522,9 @@ def main():
 
         logger.debug("check=" + str(check))
         logger.debug("dataset_images_path=" + dataset_images_path)
-
+        logger.debug("epochs=" + str(epochs))
         logger.debug("TRAINSET=" + training_files_regexp)
+
         # Creating a source dataset
         TRAINSET_SIZE = len(glob(training_files_regexp))
         print(f"The Training Dataset contains {TRAINSET_SIZE} images.")
@@ -575,7 +579,7 @@ def main():
             plot_samples_matplotlib([sample_image[0], sample_mask[0]])
 
   
-        train_network(model, dataset, STEPS_PER_EPOCH, VALIDATION_STEPS)
+        train_network(model, dataset, epochs, STEPS_PER_EPOCH, VALIDATION_STEPS)
     elif args.action == ACTION_PREDICT:
         if args.input_image is None:
             print("ERROR: missing input_image parameter")
