@@ -499,13 +499,15 @@ def main():
     parser.add_argument("-s", "--split_percentage", nargs=3, metavar=('train_p', 'validation_p', 'test_p' ),
                         type=float, default=[0.4, 0.3, 0.3],
                         help="The percentage of images to be copied respectively to train/validation/test set")
-    parser.add_argument("-e", "--epochs", required=False, default=EPOCHS, type=int, help="The number of epochs during the training")
+    parser.add_argument("-e", "--epochs", required=False, default=EPOCHS, type=int, help="The number of times that the entire dataset is passed forward and backward through the network during the training")
+    parser.add_argument("-b", "--batch_size", required=False, default=BATCH_SIZE, type=int, help="the number of samples that are passed to the network at once during the training")
 
     args = parser.parse_args()
 
     check = args.check
     weights_fname = args.weigths_file
     epochs = args.epochs
+    batch_size = args.batch_size
     
     logger.debug("weights_fname=" + weights_fname)
     
@@ -523,6 +525,7 @@ def main():
         logger.debug("check=" + str(check))
         logger.debug("dataset_images_path=" + dataset_images_path)
         logger.debug("epochs=" + str(epochs))
+        logger.debug("batch_size=" + str(batch_size))
         logger.debug("TRAINSET=" + training_files_regexp)
 
         # Creating a source dataset
@@ -536,8 +539,8 @@ def main():
             print("ERROR: Training dataset and validation datasets must be not empty!")
             exit()
 
-        STEPS_PER_EPOCH = TRAINSET_SIZE // BATCH_SIZE
-        VALIDATION_STEPS = VALSET_SIZE // BATCH_SIZE
+        STEPS_PER_EPOCH = TRAINSET_SIZE // batch_size
+        VALIDATION_STEPS = VALSET_SIZE // batch_size
 
         logger.debug("STEPS_PER_EPOCH=" + str(STEPS_PER_EPOCH))
         logger.debug("VALIDATION_STEPS=" + str(VALIDATION_STEPS))
@@ -557,13 +560,13 @@ def main():
         dataset['train'] = dataset['train'].map(load_image_train, num_parallel_calls=tf.data.experimental.AUTOTUNE)
         dataset['train'] = dataset['train'].shuffle(buffer_size=BUFFER_SIZE, seed=SEED)
         dataset['train'] = dataset['train'].repeat()
-        dataset['train'] = dataset['train'].batch(BATCH_SIZE)
+        dataset['train'] = dataset['train'].batch(batch_size)
         dataset['train'] = dataset['train'].prefetch(buffer_size=AUTOTUNE)
 
         # -- Validation Dataset --#
         dataset['val'] = dataset['val'].map(load_image_test)
         dataset['val'] = dataset['val'].repeat()
-        dataset['val'] = dataset['val'].batch(BATCH_SIZE)
+        dataset['val'] = dataset['val'].batch(batch_size)
         dataset['val'] = dataset['val'].prefetch(buffer_size=AUTOTUNE)
 
         logger.debug(dataset['train'])
