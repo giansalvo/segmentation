@@ -48,6 +48,7 @@ ACTION_SPLIT = "split"
 ACTION_TRAIN = "train"
 ACTION_PREDICT = "predict"
 ACTION_SUMMARY = "summary"
+ACTION_EVALUATE = "evaluate"
 PNG_EXT = ".png"
 FEXT_JPEG = "*.jpg"
 
@@ -78,7 +79,6 @@ BUFFER_SIZE = 1000
 EPOCHS = 20
 
 # gians PD folders structure
-dataset_root_dir = "./dataset"
 DATASET_IMG_SUBDIR = "images"
 DATASET_ANNOT_SUBDIR = "annotations"
 DATASET_TRAIN_SUBDIR = "training"
@@ -87,7 +87,8 @@ DATASET_TEST_SUBDIR = "test"
 PATH_SAVED_MODEL = 'model_saved/unet_model'
 LOGS_DIR = "logs"
 
-# global variables
+# global variables: default values
+dataset_root_dir = "./dataset"
 check = False
 weights_fname = WEIGHTS_FNAME_DEFAULT
 
@@ -486,8 +487,8 @@ def main():
     #group.add_argument("-v", "--verbose", action="store_true")
     #group.add_argument("-q", "--quiet", action="store_true")
     parser.add_argument("action", help="The action to perform: "
-                                       + ACTION_SPLIT + ", " + ACTION_TRAIN + ", " + ACTION_PREDICT + ", " + ACTION_SUMMARY,
-                        choices=(ACTION_SPLIT, ACTION_TRAIN, ACTION_PREDICT, ACTION_SUMMARY))
+                                       + ACTION_SPLIT + ", " + ACTION_TRAIN + ", " + ACTION_PREDICT + ", " + ACTION_SUMMARY + ", " + ACTION_EVALUATE,
+                        choices=(ACTION_SPLIT, ACTION_TRAIN, ACTION_PREDICT, ACTION_SUMMARY, ACTION_EVALUATE))
     parser.add_argument('--check', dest='check', default=False, action='store_true',
                         help="Display some images from dataset before training to check that dataset is ok")
     parser.add_argument('-ir', '--initial_root_dir', required=False, help="The initial root directory of images and trimaps")
@@ -516,6 +517,7 @@ def main():
     
     if args.action == ACTION_TRAIN:
         if args.dataset_root_dir is None:
+            # use default root dir
             dataset_images_path = os.path.join(dataset_root_dir, DATASET_IMG_SUBDIR)
         else:
             dataset_images_path =  os.path.join(args.dataset_root_dir, DATASET_IMG_SUBDIR)
@@ -626,8 +628,12 @@ def main():
             plot_samples_matplotlib([img0, prediction])
 
     elif args.action == ACTION_SUMMARY:
-        # print network's structure summary and save hole architecture plus weigths 
+        # print network's structure summary and save whole architecture plus weigths
+        # import pydot
+        # import graphviz
+        # tf.keras.utils.plot_model(model, show_shapes=True)
         model.summary()
+        print("Model metrics names: " + str(model.metrics_names))
         model.save(PATH_SAVED_MODEL)
     
     elif args.action == ACTION_SPLIT:
@@ -727,6 +733,40 @@ def main():
             fn, _ = os.path.splitext(os.path.basename(filenames[j]))
             fn = os.path.join(initial_annotations_dir, fn + PNG_EXT)
             shutil.copy2(fn, annot_dir)
+
+    elif args.action == ACTION_EVALUATE:
+        if args.dataset_root_dir is None:
+            # use default root dir
+            dataset_images_path = os.path.join(dataset_root_dir, DATASET_IMG_SUBDIR)
+        else:
+            dataset_images_path =  os.path.join(args.dataset_root_dir, DATASET_IMG_SUBDIR)
+        test_files_regexp =  os.path.join(dataset_images_path, DATASET_TEST_SUBDIR, FEXT_JPEG)
+
+        logger.debug("check=" + str(check))
+        logger.debug("dataset_images_path=" + dataset_images_path)
+        logger.debug("batch_size=" + str(batch_size))
+        logger.debug("testset=" + test_files_regexp)
+
+        # Creating a source dataset
+        testset_size = len(glob(test_files_regexp))
+        print(f"The test Dataset contains {testset_size} images.")
+
+        if testset_size == 0:
+            print("ERROR: the test datasets must be not empty!")
+            exit()
+
+        test_dataset = tf.data.Dataset.list_files(test_files_regexp, seed=SEED)
+        test_dataset = test_dataset.map(parse_image)
+
+        # -- test Dataset --#
+        test_dataset = test_dataset.map(load_image_test)
+        test_dataset = test_dataset.repeat()
+        test_dataset = test_dataset.batch(batch_size)
+        test_dataset = test_dataset.prefetch(buffer_size=AUTOTUNE)
+
+        scores = model.evaluate(test_dataset,
+                                steps = testset_size // batch_size)
+        print(str(dict(zip(model.metrics_names, scores))))
 
     print("Program terminated correctly.")
 
