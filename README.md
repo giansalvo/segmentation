@@ -34,11 +34,17 @@ The directories that contain the images of the dataset must be organized in the 
 ```
 
 The actions that can be performed by the script are:
+- split;
 - train;
 - predict;
+- evaluate;
 - summary.
 
 # Setup Environment
+The program has been tested in the following environment:
+- Windows 10
+- Python 3.8.0
+- Tensorflow 2.3.0
 
 ## Linux and MacOS
 ```sh
