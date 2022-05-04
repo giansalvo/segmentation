@@ -1,7 +1,8 @@
 """
-    U-Net Neural Network implementation for image segmentation
+    Neural Network implementation for image segmentation
 
     Copyright (c) 2022 Giansalvo Gusinu <profgusinu@gmail.com>
+    Copyright (c) 2021 Emil Zakirov and others
     Copyright (c) 2020 Yann LE GUILLY
 
     Code adapted from colab and article found here
@@ -39,9 +40,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
 from IPython.display import clear_output
-from tensorflow.keras.layers import *
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.preprocessing import image
+
+from deeplab_v3_plus import create_model_deeplabv3
+from unet import create_model_UNet
 
 # CONSTANTS
 ACTION_SPLIT = "split"
@@ -51,13 +54,13 @@ ACTION_SUMMARY = "summary"
 ACTION_EVALUATE = "evaluate"
 PNG_EXT = ".png"
 FEXT_JPEG = "*.jpg"
+MODEL_UNET = "unet"
+MODEL_DEEPLABV3PLUS = "deeplabv3plus"
+WEIGHTS_FNAME_DEFAULT = 'weights.h5'
 
 # For more information about autotune:
 # https://www.tensorflow.org/guide/data_performance#prefetching
 AUTOTUNE = tf.data.experimental.AUTOTUNE
-
-# DEFAULT PARAMETERS
-WEIGHTS_FNAME_DEFAULT = 'unet_weights.h5'
 
 # important for reproducibility
 # this allows to generate the same random numbers
@@ -91,6 +94,7 @@ LOGS_DIR = "logs"
 dataset_root_dir = "./dataset"
 check = False
 weights_fname = WEIGHTS_FNAME_DEFAULT
+net_model = MODEL_UNET
 
 # COPYRIGHT NOTICE AND PROGRAM VERSION
 COPYRIGHT_NOTICE = "Copyright (C) 2022 Giansalvo Gusinu <profgusinu@gmail.com>"
@@ -294,82 +298,6 @@ def show_predictions(dataset=None, num=1):
                         pred_mask[0]])
 
 
-def create_model_UNet():
-    # -- Keras Functional API -- #
-    # -- UNet Implementation -- #
-    # Everything here is from tensorflow.keras.layers
-    # I imported tensorflow.keras.layers * to make it easier to read
-    dropout_rate = 0.5  # TODO REMOVE NOT USED???
-    input_size = (IMG_SIZE, IMG_SIZE, N_CHANNELS)
-
-    # If you want to know more about why we are using `he_normal`:
-    # https://stats.stackexchange.com/questions/319323/whats-the-difference-between-variance-scaling-initializer-and-xavier-initialize/319849#319849
-    # Or the excelent fastai course:
-    # https://github.com/fastai/course-v3/blob/master/nbs/dl2/02b_initializing.ipynb
-    initializer = 'he_normal'
-
-    # -- Encoder -- #
-    # Block encoder 1
-    inputs = Input(shape=input_size)
-    conv_enc_1 = Conv2D(64, 3, activation='relu', padding='same', kernel_initializer=initializer)(inputs)
-    conv_enc_1 = Conv2D(64, 3, activation='relu', padding='same', kernel_initializer=initializer)(conv_enc_1)
-    # Block encoder 2
-    max_pool_enc_2 = MaxPooling2D(pool_size=(2, 2))(conv_enc_1)
-    conv_enc_2 = Conv2D(128, 3, activation='relu', padding='same', kernel_initializer=initializer)(max_pool_enc_2)
-    conv_enc_2 = Conv2D(128, 3, activation='relu', padding='same', kernel_initializer=initializer)(conv_enc_2)
-    # Block  encoder 3
-    max_pool_enc_3 = MaxPooling2D(pool_size=(2, 2))(conv_enc_2)
-    conv_enc_3 = Conv2D(256, 3, activation='relu', padding='same', kernel_initializer=initializer)(max_pool_enc_3)
-    conv_enc_3 = Conv2D(256, 3, activation='relu', padding='same', kernel_initializer=initializer)(conv_enc_3)
-    # Block  encoder 4
-    max_pool_enc_4 = MaxPooling2D(pool_size=(2, 2))(conv_enc_3)
-    conv_enc_4 = Conv2D(512, 3, activation='relu', padding='same', kernel_initializer=initializer)(max_pool_enc_4)
-    conv_enc_4 = Conv2D(512, 3, activation='relu', padding='same', kernel_initializer=initializer)(conv_enc_4)
-    # -- End Encoder -- #
-    # ----------- #
-    maxpool = MaxPooling2D(pool_size=(2, 2))(conv_enc_4)
-    conv = Conv2D(1024, 3, activation='relu', padding='same', kernel_initializer=initializer)(maxpool)
-    conv = Conv2D(1024, 3, activation='relu', padding='same', kernel_initializer=initializer)(conv)
-    # ----------- #
-    # -- Decoder -- #
-    # Block decoder 1
-    up_dec_1 = Conv2D(512, 2, activation='relu', padding='same', kernel_initializer=initializer)(
-        UpSampling2D(size=(2, 2))(conv))
-    merge_dec_1 = concatenate([conv_enc_4, up_dec_1], axis=3)
-    conv_dec_1 = Conv2D(512, 3, activation='relu', padding='same', kernel_initializer=initializer)(merge_dec_1)
-    conv_dec_1 = Conv2D(512, 3, activation='relu', padding='same', kernel_initializer=initializer)(conv_dec_1)
-    # Block decoder 2
-    up_dec_2 = Conv2D(256, 2, activation='relu', padding='same', kernel_initializer=initializer)(
-        UpSampling2D(size=(2, 2))(conv_dec_1))
-    merge_dec_2 = concatenate([conv_enc_3, up_dec_2], axis=3)
-    conv_dec_2 = Conv2D(256, 3, activation='relu', padding='same', kernel_initializer=initializer)(merge_dec_2)
-    conv_dec_2 = Conv2D(256, 3, activation='relu', padding='same', kernel_initializer=initializer)(conv_dec_2)
-    # Block decoder 3
-    up_dec_3 = Conv2D(128, 2, activation='relu', padding='same', kernel_initializer=initializer)(
-        UpSampling2D(size=(2, 2))(conv_dec_2))
-    merge_dec_3 = concatenate([conv_enc_2, up_dec_3], axis=3)
-    conv_dec_3 = Conv2D(128, 3, activation='relu', padding='same', kernel_initializer=initializer)(merge_dec_3)
-    conv_dec_3 = Conv2D(128, 3, activation='relu', padding='same', kernel_initializer=initializer)(conv_dec_3)
-    # Block decoder 4
-    up_dec_4 = Conv2D(64, 2, activation='relu', padding='same', kernel_initializer=initializer)(
-        UpSampling2D(size=(2, 2))(conv_dec_3))
-    merge_dec_4 = concatenate([conv_enc_1, up_dec_4], axis=3)
-    conv_dec_4 = Conv2D(64, 3, activation='relu', padding='same', kernel_initializer=initializer)(merge_dec_4)
-    conv_dec_4 = Conv2D(64, 3, activation='relu', padding='same', kernel_initializer=initializer)(conv_dec_4)
-    conv_dec_4 = Conv2D(2, 3, activation='relu', padding='same', kernel_initializer=initializer)(conv_dec_4)
-    # -- End Decoder -- #
-    output = Conv2D(N_CLASSES, 1, activation='softmax')(conv_dec_4)
-
-    model = tf.keras.Model(inputs=inputs, outputs=output, name="U-Net")
-    # optimizer=tfa.optimizers.RectifiedAdam(lr=1e-3)
-    optimizer = Adam(learning_rate=0.0001)
-    loss = tf.keras.losses.SparseCategoricalCrossentropy()
-    model.compile(optimizer=optimizer,
-                  loss=loss,
-                  metrics=['accuracy'])
-    return model
-
-
 class DisplayCallback(tf.keras.callbacks.Callback):
     def on_epoch_end(self, epoch, logs=None):
         clear_output(wait=True)
@@ -472,36 +400,47 @@ def main():
     parser = argparse.ArgumentParser(
         description=COPYRIGHT_NOTICE,
         epilog = "Examples:\n"
+                "       Prepare the dataset directories hierarchy starting from images/annotations initial directories:\n"
                 "         $python %(prog)s split -ir initial_root_dir -dr dataset_root_dir\n"
                 "         $python %(prog)s split -ir initial_root_dir -dr dataset_root_dir -s 0.4 0.3 0.3\n"
                 "\n"
-                "         $python %(prog)s summary\n"
+                "       Print the summary of the network model and save the model to disk:\n"
+                "         $python %(prog)s -m deeplabv3plus summary\n"
                 "\n"
-                "         $python %(prog)s train -dr dataset_dir\n"
-                "         $python %(prog)s train -dr dataset_dir -w weigths_file.h5 --check\n"
+                "       Train the network and write the weigths to disk:\n"
+                "         $python %(prog)s train -m deeplabv3plus -dr dataset_dir \n"
+                "         $python %(prog)s train -m deeplabv3plus -dr dataset_dir -w weigths_file.h5 --check\n"
                 "\n"
-                "         $python %(prog)s predict -i image.jpg -w weigths_file.h5 -o image_segm.png\n",
+                "       Make the network predict the segmented image of a given input image:\n"
+                "         $python %(prog)s predict -m deeplabv3plus -i image.jpg -w weigths_file.h5 --check\n"
+                "\n"
+                "       Evaluate the network loss/accuracy performances based on the test set in the dataset directories hierarchy:\n"
+                "         $python %(prog)s predict -m deeplabv3plus -dr dataset_dir -w weigths_file.h5 --check\n"
+                "\n",
         formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument('--version', action='version', version='%(prog)s v.' + PROGRAM_VERSION)
     #group = parser.add_mutually_exclusive_group()
     #group.add_argument("-v", "--verbose", action="store_true")
     #group.add_argument("-q", "--quiet", action="store_true")
-    parser.add_argument("action", help="The action to perform: "
-                                       + ACTION_SPLIT + ", " + ACTION_TRAIN + ", " + ACTION_PREDICT + ", " + ACTION_SUMMARY + ", " + ACTION_EVALUATE,
+    parser.add_argument("action", help="The action to perform: " +
+                       ACTION_SPLIT+", "+ACTION_TRAIN+", "+ACTION_PREDICT+", "+ACTION_SUMMARY+", "+ACTION_EVALUATE,
                         choices=(ACTION_SPLIT, ACTION_TRAIN, ACTION_PREDICT, ACTION_SUMMARY, ACTION_EVALUATE))
     parser.add_argument('--check', dest='check', default=False, action='store_true',
-                        help="Display some images from dataset before training to check that dataset is ok")
-    parser.add_argument('-ir', '--initial_root_dir', required=False, help="The initial root directory of images and trimaps")
-    parser.add_argument('-dr', '--dataset_root_dir', required=False, help="The root directory of the dataset")
+                        help="Display some images from dataset before training to check that dataset is ok.")
+    parser.add_argument('-ir', '--initial_root_dir', required=False, help="The initial root directory of images and trimaps.")
+    parser.add_argument('-dr', '--dataset_root_dir', required=False, help="The root directory of the dataset.")
     parser.add_argument("-w", "--weigths_file", required=False, default=WEIGHTS_FNAME_DEFAULT,
-                        help="The weigths file to be loaded/saved")
-    parser.add_argument("-i", "--input_image", required=False, help="The input file to be segmented")
-    parser.add_argument("-o", "--output_file", required=False, help="The output file with the segmented image")
+                        help="The weigths file to be loaded/saved. It must be compatible with the network model chosen.")
+    parser.add_argument("-i", "--input_image", required=False, help="The input file to be segmented.")
+    parser.add_argument("-o", "--output_file", required=False, help="The output file with the segmented image.")
     parser.add_argument("-s", "--split_percentage", nargs=3, metavar=('train_p', 'validation_p', 'test_p' ),
                         type=float, default=[0.4, 0.3, 0.3],
-                        help="The percentage of images to be copied respectively to train/validation/test set")
+                        help="The percentage of images to be copied respectively to train/validation/test set.")
     parser.add_argument("-e", "--epochs", required=False, default=EPOCHS, type=int, help="The number of times that the entire dataset is passed forward and backward through the network during the training")
     parser.add_argument("-b", "--batch_size", required=False, default=BATCH_SIZE, type=int, help="the number of samples that are passed to the network at once during the training")
+    parser.add_argument('-m', "--model", required=False, default=MODEL_UNET, 
+                        choices=(MODEL_UNET, MODEL_DEEPLABV3PLUS), 
+                        help="The model of network to be created/used. It must be compatible with the weigths file.")
 
     args = parser.parse_args()
 
@@ -509,11 +448,25 @@ def main():
     weights_fname = args.weigths_file
     epochs = args.epochs
     batch_size = args.batch_size
+    network_model = args.model
     
     logger.debug("weights_fname=" + weights_fname)
+    logger.debug("network_model=" + network_model)
     
     # create the unet network architecture with keras
-    model = create_model_UNet()
+    if network_model == MODEL_UNET:
+        model = create_model_UNet(input_size=(IMG_SIZE, IMG_SIZE, 3), classes=N_CLASSES)
+    elif network_model == MODEL_DEEPLABV3PLUS:
+        model = create_model_deeplabv3(input_shape=(IMG_SIZE, IMG_SIZE, 3), classes=N_CLASSES)
+    else:
+        # BUG
+        raise ValueError('Model of network not supported.') 
+     # optimizer=tfa.optimizers.RectifiedAdam(lr=1e-3)
+    optimizer = Adam(learning_rate=0.0001)
+    loss = tf.keras.losses.SparseCategoricalCrossentropy()
+    model.compile(optimizer=optimizer,
+                  loss=loss,
+                  metrics=['accuracy'])
     
     if args.action == ACTION_TRAIN:
         if args.dataset_root_dir is None:
@@ -641,9 +594,10 @@ def main():
         train_p = args.split_percentage[0]
         val_p = args.split_percentage[1]
         test_p = args.split_percentage[2]
-        if train_p + val_p + test_p != 1:
-            print("ERROR: the sum of percentages parameters must give 1")
+        if round(train_p + val_p + test_p) != 1:
+            print(str(train_p + val_p + test_p))
             print(args.split_percentage)
+            print("ERROR: the sum of percentages parameters must give 1")
             exit()
         if args.initial_root_dir is None:
             print("ERROR: you must specify the initial_root_dir parameter")
@@ -666,7 +620,7 @@ def main():
         ntot = len(filenames)
         ntrain = round(ntot * train_p)
         nvalid = round(ntot * val_p)
-        ntest  = round(ntot * test_p)
+        ntest  = ntot - ntrain - nvalid  # avoid rounding errors
         print("Number of images found: ", ntot)
         if ntot == 0:
             print("ERROR: no images found with the following serch pattern")
@@ -755,6 +709,12 @@ def main():
             print("ERROR: the test datasets must be not empty!")
             exit()
 
+        steps_num = testset_size // batch_size
+        logger.debug("steps_num=" + str(steps_num))
+        if steps_num == 0:
+            print("ERROR: steps_num cannot be zero. Increase number of images or reduce batch_size.")
+            exit()
+
         test_dataset = tf.data.Dataset.list_files(test_files_regexp, seed=SEED)
         test_dataset = test_dataset.map(parse_image)
 
@@ -765,7 +725,7 @@ def main():
         test_dataset = test_dataset.prefetch(buffer_size=AUTOTUNE)
 
         scores = model.evaluate(test_dataset,
-                                steps = testset_size // batch_size)
+                                steps = steps_num)
         print(str(dict(zip(model.metrics_names, scores))))
 
     print("Program terminated correctly.")
