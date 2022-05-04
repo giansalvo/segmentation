@@ -64,65 +64,88 @@ $ python main.py -h
 
 This is the help message that you will get:
 ```sh
-usage: main.py [-h] [--version] [-v | -q] [--check] [-r DATASET_ROOT_DIR]
-               [-w WEIGTHS_FILE] [-i INPUT_IMAGE] [-o OUTPUT_FILE]
-               {train,predict,summary}
+usage: main.py [-h] [--version] [--check] [-ir INITIAL_ROOT_DIR]
+               [-dr DATASET_ROOT_DIR] [-w WEIGTHS_FILE] [-i INPUT_IMAGE]
+               [-o OUTPUT_FILE] [-s train_p validation_p test_p] [-e EPOCHS]
+               [-b BATCH_SIZE] [-m {unet,deeplabv3plus}]
+               {split,train,predict,summary,evaluate}
 
 Copyright (C) 2022 Giansalvo Gusinu <profgusinu@gmail.com>
 
 positional arguments:
-  {train,predict,summary}
-                        The action to perform: train, predict, summary
+  {split,train,predict,summary,evaluate}
+                        The action to perform: split, train, predict, summary, evaluate
 
 optional arguments:
   -h, --help            show this help message and exit
   --version             show program's version number and exit
-  -v, --verbose
-  -q, --quiet
-  --check               Display some images from dataset before training to check that dataset is ok
-  -r DATASET_ROOT_DIR, --dataset_root_dir DATASET_ROOT_DIR
-                        The root directory for images
+  --check               Display some images from dataset before training to check that dataset is ok.
+  -ir INITIAL_ROOT_DIR, --initial_root_dir INITIAL_ROOT_DIR
+                        The initial root directory of images and trimaps.
+  -dr DATASET_ROOT_DIR, --dataset_root_dir DATASET_ROOT_DIR
+                        The root directory of the dataset.
   -w WEIGTHS_FILE, --weigths_file WEIGTHS_FILE
-                        The weigths file to be loaded/saved
+                        The weigths file to be loaded/saved. It must be compatible with the network model chosen.
   -i INPUT_IMAGE, --input_image INPUT_IMAGE
-                        The input file to be segmented
+                        The input file to be segmented.
   -o OUTPUT_FILE, --output_file OUTPUT_FILE
-                        The output file with the segmented image
+                        The output file with the segmented image.
+  -s train_p validation_p test_p, --split_percentage train_p validation_p test_p
+                        The percentage of images to be copied respectively to train/validation/test set.
+  -e EPOCHS, --epochs EPOCHS
+                        The number of times that the entire dataset is passed forward and backward through the network during the training
+  -b BATCH_SIZE, --batch_size BATCH_SIZE
+                        the number of samples that are passed to the network at once during the training
+  -m {unet,deeplabv3plus}, --model {unet,deeplabv3plus}
+                        The model of network to be created/used. It must be compatible with the weigths file.
 ```
 
 ## Examples
 
+Prepare the dataset directories hierarchy starting from images/annotations initial directories:
+```sh
+    $python main.py split -ir initial_root_dir -dr dataset_root_dir
+    $python main.py split -ir initial_root_dir -dr dataset_root_dir -s 0.4 0.3 0.3
+```
+
 Show a summary of the network's structure to the standard output and save the model to disk:
 ```sh
-$ python main.py summary
+    $python main.py summary -m deeplabv3plus
 ```
 
 Train the network:
 ```sh
-$ python main.py train
-
-$ python main.py train -r dataset_dir -w weigths_file.h5
-
-$ python main.py train -r dataset_dir -w weigths_file.h5 --check
+    $python main.py train -m deeplabv3plus
+    $python main.py train -m deeplabv3plus -dr dataset_dir -w weigths_file.h5
+    $python main.py train -m deeplabv3plus -dr dataset_dir -w weigths_file.h5 --check
 ```
 
 Make the network predict a segmented image given an input image and the weights file:
 ```sh
-$ python main.py predict -i image.jpg
-
-$ python main.py predict -i image.jpg -w weigths_file.h5 -o image_segm.jpg
+    $python main.py predict -m deeplabv3plus -i image.jpg
+    $python main.py predict -i image.jpg -w weigths_file.h5 -o image_segm.jpg --check
 ```
+
+Evaluate the network loss/accuracy performances based on the test set in the dataset directories hierarchy:
+```sh
+    $python main.py predict -m deeplabv3plus -dr dataset_dir -w weigths_file.h5 --check
+```
+
 # Credits
 
-This project was inspired and adapted from original code and article by Yann Leguilly:
+Part of the code was adapted from original code and article by Yann Leguilly:
 - https://yann-leguilly.gitlab.io/post/2019-12-14-tensorflow-tfdata-segmentation/
 - https://github.com/dhassault/tf-semantic-example
+
+The implementation of the deeplabv3plus was adapted from code by Emil Zakirov and others:
+- https://github.com/bonlime/keras-deeplab-v3-plus
 
 # License
 
 ```sh
 Copyright (C) 2022 Giansalvo Gusinu
-Copyright (c) 2020 Yann LE GUILLY
+Copyright (c) 2021 Emil Zakirov and others
+Copyright (c) 2020 Yann Le Guilly
 
 Permission is hereby granted, free of charge, to any person obtaining a 
 copy of this software and associated documentation files (the "Software"),

@@ -5,7 +5,7 @@
     Copyright (c) 2021 Emil Zakirov and others
     Copyright (c) 2020 Yann LE GUILLY
 
-    Code adapted from colab and article found here
+    Code adapted from following articles/repositories:
     https://yann-leguilly.gitlab.io/post/2019-12-14-tensorflow-tfdata-segmentation/
     https://github.com/dhassault/tf-semantic-example
 
@@ -405,7 +405,7 @@ def main():
                 "         $python %(prog)s split -ir initial_root_dir -dr dataset_root_dir -s 0.4 0.3 0.3\n"
                 "\n"
                 "       Print the summary of the network model and save the model to disk:\n"
-                "         $python %(prog)s -m deeplabv3plus summary\n"
+                "         $python %(prog)s summary -m deeplabv3plus\n"
                 "\n"
                 "       Train the network and write the weigths to disk:\n"
                 "         $python %(prog)s train -m deeplabv3plus -dr dataset_dir \n"
@@ -415,7 +415,7 @@ def main():
                 "         $python %(prog)s predict -m deeplabv3plus -i image.jpg -w weigths_file.h5 --check\n"
                 "\n"
                 "       Evaluate the network loss/accuracy performances based on the test set in the dataset directories hierarchy:\n"
-                "         $python %(prog)s predict -m deeplabv3plus -dr dataset_dir -w weigths_file.h5 --check\n"
+                "         $python %(prog)s evaluate -m deeplabv3plus -dr dataset_dir -w weigths_file.h5 --check\n"
                 "\n",
         formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument('--version', action='version', version='%(prog)s v.' + PROGRAM_VERSION)
