@@ -70,7 +70,7 @@ usage: main.py [-h] [--version] [--check] [-ir INITIAL_ROOT_DIR]
                [-b BATCH_SIZE] [-m {unet,deeplabv3plus}]
                {split,train,predict,summary,evaluate}
 
-Copyright (C) 2022 Giansalvo Gusinu <profgusinu@gmail.com>
+Copyright (C) 2022 Giansalvo Gusinu
 
 positional arguments:
   {split,train,predict,summary,evaluate}
