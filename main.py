@@ -87,14 +87,19 @@ DATASET_ANNOT_SUBDIR = "annotations"
 DATASET_TRAIN_SUBDIR = "training"
 DATASET_VAL_SUBDIR = "validation"
 DATASET_TEST_SUBDIR = "test"
-PATH_SAVED_MODEL = 'model_saved/unet_model'
-LOGS_DIR = "logs"
+DEFAULT_NETSTRUCTURE_PATH = 'model_saved/unet_model'
+DEFAULT_LOGS_DIR = "logs"
 
 # global variables: default values
 dataset_root_dir = "./dataset"
 check = False
 weights_fname = WEIGHTS_FNAME_DEFAULT
 net_model = MODEL_UNET
+network_structure_path = DEFAULT_NETSTRUCTURE_PATH
+logs_dir = DEFAULT_LOGS_DIR
+sample_image = None
+sample_mask = None
+model = None
 
 # COPYRIGHT NOTICE AND PROGRAM VERSION
 COPYRIGHT_NOTICE = "Copyright (C) 2022 Giansalvo Gusinu <profgusinu@gmail.com>"
@@ -226,20 +231,6 @@ def load_image_test(datapoint: dict) -> tuple:
     return input_image, input_mask
 
 
-def display_sample(display_list, title_list=['Input Image', 'True Mask', 'Predicted Mask']):
-    """Show side-by-side an input image,
-    the ground truth and the prediction.
-    """
-    plt.figure(figsize=(18, 18))
-
-    for i in range(len(display_list)):
-        plt.subplot(1, len(display_list), i + 1)
-        plt.title(title_list[i])
-        plt.imshow(tf.keras.preprocessing.image.array_to_img(display_list[i]))
-        plt.axis('off')
-    plt.show()
-
-
 def create_mask(pred_mask: tf.Tensor) -> tf.Tensor:
     """Return a filter mask with the top 1 predicitons
     only.
@@ -279,10 +270,11 @@ def show_predictions(dataset=None, num=1):
         Number of sample to show, by default 1
     """
     if dataset:
-        for image, mask in dataset.take(num):
+        for image, true_mask in dataset.take(num):
             pred_mask = model.predict(image)
-            display_sample([image[0], true_mask, create_mask(pred_mask)])
+            plot_samples_matplotlib([image[0], true_mask, create_mask(pred_mask)])
     else:
+        #plot_samples_matplotlib([sample_image[0], sample_mask[0]])
         # The model is expecting a tensor of the size
         # [BATCH_SIZE, IMG_SIZE, IMG_SIZE, 3]
         # but sample_image[0] is [IMG_SIZE, IMG_SIZE, 3]
@@ -294,20 +286,20 @@ def show_predictions(dataset=None, num=1):
         # inference -> [1, IMG_SIZE, IMG_SIZE, N_CLASS]
         pred_mask = create_mask(inference)
         # pred_mask -> [1, IMG_SIZE, IMG_SIZE, 1]
-        display_sample([sample_image[0], sample_mask[0],
-                        pred_mask[0]])
-
+        plot_samples_matplotlib([sample_image[0], sample_mask[0], pred_mask[0]])
+            
 
 class DisplayCallback(tf.keras.callbacks.Callback):
     def on_epoch_end(self, epoch, logs=None):
         clear_output(wait=True)
-        if check:   # TODO BUG this is always False
-            show_predictions()
+        if check:
             print('\nSample Prediction after epoch {}\n'.format(epoch + 1))
+            show_predictions()
 
 
 def train_network(network_model, images_dataset, epochs, steps_per_epoch, validation_steps):
-    logdir = os.path.join(LOGS_DIR, datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
+
+    logdir = os.path.join(logs_dir, datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
     tensorboard_callback = tf.keras.callbacks.TensorBoard(logdir, histogram_freq=1)
     callbacks = [
         # to show samples after each epoch
@@ -376,6 +368,12 @@ def plot_samples_matplotlib(display_list, figsize=(5, 3)):
 #########################
 def main():
     global weights_fname
+    global check
+    global logs_dir
+    global sample_image     #  used to display images during training
+    global sample_mask      #  used to display images during training
+    global model
+
     # create logger
     logger = logging.getLogger('gians')
     logger.setLevel(logging.DEBUG)
@@ -441,6 +439,11 @@ def main():
     parser.add_argument('-m', "--model", required=False, default=MODEL_UNET, 
                         choices=(MODEL_UNET, MODEL_DEEPLABV3PLUS), 
                         help="The model of network to be created/used. It must be compatible with the weigths file.")
+    parser.add_argument("-l", "--logs_dir", required=False, default=DEFAULT_LOGS_DIR, 
+                        help="The directory where training information will be added. If it doesn't exist it will be created.")
+    parser.add_argument("-nsp", "--network_structure_path", required=False, default=DEFAULT_NETSTRUCTURE_PATH, 
+                        help="The path where the network structure will be saved (summary). If it doesn't exist it will be created.")
+
 
     args = parser.parse_args()
 
@@ -449,9 +452,13 @@ def main():
     epochs = args.epochs
     batch_size = args.batch_size
     network_model = args.model
+    network_structure_path = args.network_structure_path
+    logs_dir = args.logs_dir
     
     logger.debug("weights_fname=" + weights_fname)
     logger.debug("network_model=" + network_model)
+    logger.debug("network_structure_path=" + network_structure_path)
+    logger.debug("logs_dir=" + logs_dir)
     
     # create the unet network architecture with keras
     if network_model == MODEL_UNET:
@@ -534,10 +541,10 @@ def main():
             print("Displaying content of dataset to make sure everything is fine...")
             for image, mask in dataset['train'].take(1):
                 sample_image, sample_mask = image, mask
-            plot_samples_matplotlib([sample_image[0], sample_mask[0]])
-
-  
+                plot_samples_matplotlib([sample_image[0], sample_mask[0]])
+        
         train_network(model, dataset, epochs, STEPS_PER_EPOCH, VALIDATION_STEPS)
+
     elif args.action == ACTION_PREDICT:
         if args.input_image is None:
             print("ERROR: missing input_image parameter")
@@ -584,10 +591,10 @@ def main():
         # print network's structure summary and save whole architecture plus weigths
         # import pydot
         # import graphviz
-        # tf.keras.utils.plot_model(model, show_shapes=True)
+        # tf.keras.utils.plot_model(model, show_shapes=True)  #  TODO BUG graphical image doesn't get displayed
         model.summary()
         print("Model metrics names: " + str(model.metrics_names))
-        model.save(PATH_SAVED_MODEL)
+        model.save(network_structure_path)
     
     elif args.action == ACTION_SPLIT:
         # split images and trimap in train/validate/test by creating the dataset folder hierarchy
