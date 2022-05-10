@@ -42,6 +42,7 @@ import tensorflow as tf
 from IPython.display import clear_output
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.preprocessing import image
+from PIL import Image
 
 from deeplab_v3_plus import create_model_deeplabv3
 from unet import create_model_UNet
@@ -334,6 +335,24 @@ def infer(model, image_tensor):
     return predictions[0]
 
 
+def generate_greyscale_image(img2):
+    x_max = tf.reduce_max(img2)
+    img2 = img2 * 255
+    img2 = img2 / x_max
+    jpeg = tf.image.encode_jpeg(tf.cast(img2, tf.uint8))
+    return jpeg
+
+
+def generate_colormap_image(input_fname):
+    cm_hot = plt.cm.get_cmap('viridis')
+    img_src = Image.open(input_fname).convert('L')
+    img_src.thumbnail((512,512))
+    im = np.array(img_src)
+    im = cm_hot(im)
+    im = np.uint8(im * 255)
+    im = Image.fromarray(im)
+    return im
+
 # def decode_segmentation_masks(mask, colormap, n_classes):
 #     r = np.zeros_like(mask).astype(np.uint8)
 #     g = np.zeros_like(mask).astype(np.uint8)
@@ -559,7 +578,7 @@ def main():
         fn, fext = os.path.splitext(os.path.basename(output_fname))
         output_fname = fn + "_segm" + fext
         out_3map_fname = fn + "_3map" + fext
-        out_cmap_fname = fn + "_cmap" + fext
+        out_cmap_fname = fn + "_cmap.png"
         logger.debug("output_fname=" + output_fname)
 
         model.load_weights(weights_fname)
@@ -574,15 +593,16 @@ def main():
         img1 = tf.image.encode_jpeg(img1)
         tf.io.write_file(out_3map_fname, img1)
 
-        # compute visible output and save image to disk
-        img2 = prediction
-        print("Saving visible output segmented image to file: " + output_fname)
-        x_max = tf.reduce_max(img2)
-        img2 = img2 * 255
-        img2 = img2 / x_max
-        jpeg = tf.image.encode_jpeg(tf.cast(img2, tf.uint8))
+        # compute grayscale segmented image and save it to disk
+        print("Saving grayscale segmented image to file: " + output_fname)
+        jpeg = generate_greyscale_image(prediction)
         tf.io.write_file(output_fname, jpeg)
-        
+    
+        # compute colored segmented image and save it to disk
+        print("Saving colored segmented image to file: " + out_cmap_fname)
+        im = generate_colormap_image(output_fname)  # TODO this should take the 3map image in memory and not the greyscale file
+        im.save(out_cmap_fname)
+
         # if check is set, then display image to screen
         if check:
             plot_samples_matplotlib([img0, prediction])
