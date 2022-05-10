@@ -134,7 +134,7 @@ Make the network predict a segmented image given an input image and the weights 
 
 Evaluate the network loss/accuracy performances based on the test set in the dataset directories hierarchy:
 ```sh
-    $python main.py predict -m deeplabv3plus -dr dataset_dir -w weigths_file.h5 --check
+    $python main.py evaluate -m deeplabv3plus -w weigths_file.h5 -dr dataset_dir --check
 ```
 
 # Credits
