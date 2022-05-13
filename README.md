@@ -38,7 +38,8 @@ The actions that can be performed by the script are:
 - train;
 - predict;
 - evaluate;
-- summary.
+- summary;
+- inspect.
 
 # Setup Environment
 The program has been tested in the following environment:
@@ -135,6 +136,11 @@ Make the network predict a segmented image given an input image and the weights 
 Evaluate the network loss/accuracy performances based on the test set in the dataset directories hierarchy:
 ```sh
     $python main.py evaluate -m deeplabv3plus -w weigths_file.h5 -dr dataset_dir --check
+```
+
+Inspect some predictions obtained in a previous training with --save_predictions::
+```sh
+    $python main.py inspect -r *.png
 ```
 
 # Credits
