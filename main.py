@@ -53,11 +53,13 @@ ACTION_TRAIN = "train"
 ACTION_PREDICT = "predict"
 ACTION_SUMMARY = "summary"
 ACTION_EVALUATE = "evaluate"
+ACTION_INSPECT = "inspect"
 PNG_EXT = ".png"
 FEXT_JPEG = "*.jpg"
 MODEL_UNET = "unet"
 MODEL_DEEPLABV3PLUS = "deeplabv3plus"
 WEIGHTS_FNAME_DEFAULT = 'weights.h5'
+REGEXP_DEFAULT = "*.png"
 
 # For more information about autotune:
 # https://www.tensorflow.org/guide/data_performance#prefetching
@@ -94,6 +96,7 @@ DEFAULT_LOGS_DIR = "logs"
 # global variables: default values
 dataset_root_dir = "./dataset"
 check = False
+save_some_predictions = False
 weights_fname = WEIGHTS_FNAME_DEFAULT
 net_model = MODEL_UNET
 network_structure_path = DEFAULT_NETSTRUCTURE_PATH
@@ -288,7 +291,30 @@ def show_predictions(dataset=None, num=1):
         pred_mask = create_mask(inference)
         # pred_mask -> [1, IMG_SIZE, IMG_SIZE, 1]
         plot_samples_matplotlib([sample_image[0], sample_mask[0], pred_mask[0]])
-            
+
+
+def save_predictions(epoch, dataset=None, num=1):
+    out_3map_fname = "figure_3map_{:03d}.jpg".format(epoch)
+    out_seg_fname = "figure_seg_{:03d}.jpg".format(epoch)
+    out_cmap_fname = "figure_cmap_{:03d}.png".format(epoch)
+
+    prediction = infer(model=model, image_tensor=sample_image[0])
+    # compute trimap output and save image to disk
+    print("Saving trimap output segmented image to file: " + out_3map_fname)
+    img1 = tf.cast(prediction, tf.uint8)
+    img1 = tf.image.encode_jpeg(img1)
+    tf.io.write_file(out_3map_fname, img1)
+
+    # compute grayscale segmented image and save it to disk
+    print("Saving grayscale segmented image to file: " + out_seg_fname)
+    jpeg = generate_greyscale_image(prediction)
+    tf.io.write_file(out_seg_fname, jpeg)
+
+    # compute colored segmented image and save it to disk
+    print("Saving colored segmented image to file: " + out_cmap_fname)
+    im = generate_colormap_image(out_seg_fname)  # TODO this should take the 3map image in memory and not the greyscale file
+    im.save(out_cmap_fname)
+
 
 class DisplayCallback(tf.keras.callbacks.Callback):
     def on_epoch_end(self, epoch, logs=None):
@@ -296,6 +322,8 @@ class DisplayCallback(tf.keras.callbacks.Callback):
         if check:
             print('\nSample Prediction after epoch {}\n'.format(epoch + 1))
             show_predictions()
+        if save_some_predictions:
+            save_predictions(epoch=epoch)
 
 
 def train_network(network_model, images_dataset, epochs, steps_per_epoch, validation_steps):
@@ -373,13 +401,40 @@ def generate_colormap_image(input_fname):
 #     return overlay
 
 
-def plot_samples_matplotlib(display_list, figsize=(5, 3)):
-    _, axes = plt.subplots(nrows=1, ncols=len(display_list), figsize=figsize)
-    for i in range(len(display_list)):
-        if display_list[i].shape[-1] == 3:
-            axes[i].imshow(tf.keras.preprocessing.image.array_to_img(display_list[i]))
+def plot_samples_matplotlib(display_list, labels_list=None, figsize=None):
+    NIMG_PER_COLS = 6
+    if figsize is None:
+        PX = 1/plt.rcParams['figure.dpi']  # pixel in inches
+        figsize = (600*PX, 300*PX)
+    ntot = len(display_list)
+    nrows = ntot // NIMG_PER_COLS + 1
+    if ntot < NIMG_PER_COLS:
+        ncols = ntot
+    else:
+        ncols = NIMG_PER_COLS
+    _, axes = plt.subplots(nrows, ncols, figsize=figsize)
+    for i_img in range(ntot):
+        i = i_img // NIMG_PER_COLS
+        j = i_img % NIMG_PER_COLS
+        if display_list[i_img].shape[-1] == 3:
+                if nrows > 1:
+                    if labels_list is not None:
+                        axes[i, j].set_title(labels_list[i_img])
+                    axes[i, j].imshow(tf.keras.preprocessing.image.array_to_img(display_list[i_img]))
+                else:
+                    if labels_list is not None:
+                        axes[i_img].set_title(labels_list[i_img])
+                    axes[i_img].imshow(tf.keras.preprocessing.image.array_to_img(display_list[i_img]))
         else:
-            axes[i].imshow(display_list[i])
+                if nrows > 1:
+                    axes[i, j].imshow(display_list[i_img])
+                else:
+                    axes[i_img].imshow(display_list[i_img])
+
+    # Hide x labels and tick labels for top plots and y ticks for right plots.
+    for axes in axes.flat:
+        axes.label_outer()
+
     plt.show()
 
 #########################
@@ -388,6 +443,7 @@ def plot_samples_matplotlib(display_list, figsize=(5, 3)):
 def main():
     global weights_fname
     global check
+    global save_some_predictions
     global logs_dir
     global sample_image     #  used to display images during training
     global sample_mask      #  used to display images during training
@@ -433,6 +489,9 @@ def main():
                 "\n"
                 "       Evaluate the network loss/accuracy performances based on the test set in the dataset directories hierarchy:\n"
                 "         $python %(prog)s evaluate -m deeplabv3plus -dr dataset_dir -w weigths_file.h5 --check\n"
+                "\n"
+                "       Inspect some predictions from previous trainings:\n"
+                "         $python %(prog)s inspect -r *.jpg\n"
                 "\n",
         formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument('--version', action='version', version='%(prog)s v.' + PROGRAM_VERSION)
@@ -441,9 +500,11 @@ def main():
     #group.add_argument("-q", "--quiet", action="store_true")
     parser.add_argument("action", help="The action to perform: " +
                        ACTION_SPLIT+", "+ACTION_TRAIN+", "+ACTION_PREDICT+", "+ACTION_SUMMARY+", "+ACTION_EVALUATE,
-                        choices=(ACTION_SPLIT, ACTION_TRAIN, ACTION_PREDICT, ACTION_SUMMARY, ACTION_EVALUATE))
+                        choices=(ACTION_SPLIT, ACTION_TRAIN, ACTION_PREDICT, ACTION_SUMMARY, ACTION_EVALUATE, ACTION_INSPECT))
     parser.add_argument('--check', dest='check', default=False, action='store_true',
                         help="Display some images from dataset before training to check that dataset is ok.")
+    parser.add_argument('--save_predictions', dest='save_some_predictions', default=False, action='store_true',
+                        help="Save some prediction at the end of each epoch during training.")
     parser.add_argument('-ir', '--initial_root_dir', required=False, help="The initial root directory of images and trimaps.")
     parser.add_argument('-dr', '--dataset_root_dir', required=False, help="The root directory of the dataset.")
     parser.add_argument("-w", "--weigths_file", required=False, default=WEIGHTS_FNAME_DEFAULT,
@@ -462,11 +523,14 @@ def main():
                         help="The directory where training information will be added. If it doesn't exist it will be created.")
     parser.add_argument("-nsp", "--network_structure_path", required=False, default=DEFAULT_NETSTRUCTURE_PATH, 
                         help="The path where the network structure will be saved (summary). If it doesn't exist it will be created.")
-
+    parser.add_argument("-r", "--regexp", required=False, default=REGEXP_DEFAULT, 
+                        help="Regular expression to be used to inspect.")
 
     args = parser.parse_args()
 
     check = args.check
+    save_some_predictions = args.save_some_predictions
+    regexp = args.regexp
     weights_fname = args.weigths_file
     epochs = args.epochs
     batch_size = args.batch_size
@@ -504,6 +568,7 @@ def main():
         validation_files_regexp = os.path.join(dataset_images_path, DATASET_VAL_SUBDIR, FEXT_JPEG)
 
         logger.debug("check=" + str(check))
+        logger.debug("save_some_predictions=" + str(save_some_predictions))
         logger.debug("dataset_images_path=" + dataset_images_path)
         logger.debug("epochs=" + str(epochs))
         logger.debug("batch_size=" + str(batch_size))
@@ -556,11 +621,12 @@ def main():
         # how shuffle works: https://stackoverflow.com/a/53517848
 
         # Visualize the content of our dataloaders to make sure everything is fine.
-        if check:
+        if check or save_some_predictions:
             print("Displaying content of dataset to make sure everything is fine...")
             for image, mask in dataset['train'].take(1):
                 sample_image, sample_mask = image, mask
-                plot_samples_matplotlib([sample_image[0], sample_mask[0]])
+                plot_samples_matplotlib([sample_image[0], sample_mask[0]],
+                                        ["Sample image", "Ground truth"])
         
         train_network(model, dataset, epochs, STEPS_PER_EPOCH, VALIDATION_STEPS)
 
@@ -754,6 +820,25 @@ def main():
         scores = model.evaluate(test_dataset,
                                 steps = steps_num)
         print(str(dict(zip(model.metrics_names, scores))))
+    elif args.action == ACTION_INSPECT:
+        logger.debug("regexp=" + regexp)
+        filenames_regexp = regexp
+        num = len(glob(filenames_regexp))
+        print(f"Found {num} images.")
+        if num < 2:
+            print("ERROR: You need at least two images.")
+            exit()
+
+        images = []
+        fnames = []
+        for fname in glob(filenames_regexp):
+            img = tf.io.read_file(fname)
+            img = tf.image.decode_jpeg(img, channels=3)
+            img = tf.image.convert_image_dtype(img, tf.uint8)
+            images.append(img)
+            fnames.append(fname)
+
+        plot_samples_matplotlib(images, fnames)
 
     print("Program terminated correctly.")
 
