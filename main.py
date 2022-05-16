@@ -677,7 +677,7 @@ def main():
         # print network's structure summary and save whole architecture plus weigths
         # import pydot
         # import graphviz
-        # tf.keras.utils.plot_model(model, show_shapes=True)  #  TODO BUG graphical image doesn't get displayed
+        # tf.keras.utils.plot_model(model, to_file='model_test.png', show_shapes=True, show_layer_names=True) #  TODO BUG graphical image doesn't get displayed
         model.summary()
         print("Model metrics names: " + str(model.metrics_names))
         model.save(network_structure_path)
