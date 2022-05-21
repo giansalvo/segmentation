@@ -44,8 +44,9 @@ from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.preprocessing import image
 from PIL import Image
 
-from deeplab_v3_plus import create_model_deeplabv3
+from deeplab_v3_plus import create_model_deeplabv3plus
 from unet import create_model_UNet
+from unet2 import create_model_UNet2
 
 # CONSTANTS
 ACTION_SPLIT = "split"
@@ -57,13 +58,14 @@ ACTION_INSPECT = "inspect"
 PNG_EXT = ".png"
 FEXT_JPEG = "*.jpg"
 MODEL_UNET = "unet"
+MODEL_UNET2 = "unet2"
 MODEL_DEEPLABV3PLUS = "deeplabv3plus"
 WEIGHTS_FNAME_DEFAULT = 'weights.h5'
 REGEXP_DEFAULT = "*.png"
+TRANSF_LEARN_IMAGENET_AND_FREEZE_DOWN = "imagenet_freeze_down"  # must match with unet2.py
 
 # For more information about autotune:
 # https://www.tensorflow.org/guide/data_performance#prefetching
-AUTOTUNE = tf.data.experimental.AUTOTUNE
 
 # important for reproducibility
 # this allows to generate the same random numbers
@@ -74,7 +76,7 @@ IMG_SIZE = 128
 # Our images are RGB (3 channels)
 N_CHANNELS = 3
 # Scene Parsing has 150 classes + `not labeled`
-N_CLASSES = 151
+N_CLASSES = 3
 
 BATCH_SIZE = 32
 
@@ -90,11 +92,11 @@ DATASET_ANNOT_SUBDIR = "annotations"
 DATASET_TRAIN_SUBDIR = "training"
 DATASET_VAL_SUBDIR = "validation"
 DATASET_TEST_SUBDIR = "test"
-DEFAULT_NETSTRUCTURE_PATH = 'model_saved/unet_model'
+DEFAULT_NETSTRUCTURE_PATH = 'model_saved/model_name'
 DEFAULT_LOGS_DIR = "logs"
 
 # global variables: default values
-dataset_root_dir = "./dataset"
+dataset_root_dir = ""
 check = False
 save_some_predictions = False
 weights_fname = WEIGHTS_FNAME_DEFAULT
@@ -104,6 +106,8 @@ logs_dir = DEFAULT_LOGS_DIR
 sample_image = None
 sample_mask = None
 model = None
+learn_rate = 0.001
+transfer_learning = None
 
 # COPYRIGHT NOTICE AND PROGRAM VERSION
 COPYRIGHT_NOTICE = "Copyright (C) 2022 Giansalvo Gusinu <profgusinu@gmail.com>"
@@ -172,11 +176,25 @@ def normalize(input_image: tf.Tensor, input_mask: tf.Tensor) -> tuple:
         Normalized image and its annotation.
     """
     input_image = tf.cast(input_image, tf.float32) / 255.0
+    input_mask -= 1
     return input_image, input_mask
 
 
+class Augment(tf.keras.layers.Layer):
+  def __init__(self, seed=42):
+    super().__init__()
+    # both use the same seed, so they'll make the same random changes.
+    self.augment_inputs = tf.keras.layers.RandomFlip(mode="horizontal", seed=seed)
+    self.augment_labels = tf.keras.layers.RandomFlip(mode="horizontal", seed=seed)
+  
+  def call(self, inputs, labels):
+    inputs = self.augment_inputs(inputs)
+    labels = self.augment_labels(labels)
+    return inputs, labels
+
+
 @tf.function
-def load_image_train(datapoint: dict) -> tuple:
+def load_image(datapoint: dict) -> tuple:
     """Apply some transformations to an input dictionary
     containing a train image and its annotation.
 
@@ -198,40 +216,7 @@ def load_image_train(datapoint: dict) -> tuple:
     """
     input_image = tf.image.resize(datapoint['image'], (IMG_SIZE, IMG_SIZE))
     input_mask = tf.image.resize(datapoint['segmentation_mask'], (IMG_SIZE, IMG_SIZE))
-
-    if tf.random.uniform(()) > 0.5:
-        input_image = tf.image.flip_left_right(input_image)
-        input_mask = tf.image.flip_left_right(input_mask)
-
     input_image, input_mask = normalize(input_image, input_mask)
-
-    return input_image, input_mask
-
-
-@tf.function
-def load_image_test(datapoint: dict) -> tuple:
-    """Normalize and resize a test image and its annotation.
-
-    Notes
-    -----
-    Since this is for the test set, we don't need to apply
-    any data augmentation technique.
-
-    Parameters
-    ----------
-    datapoint : dict
-        A dict containing an image and its annotation.
-
-    Returns
-    -------
-    tuple
-        A modified image and its annotation.
-    """
-    input_image = tf.image.resize(datapoint['image'], (IMG_SIZE, IMG_SIZE))
-    input_mask = tf.image.resize(datapoint['segmentation_mask'], (IMG_SIZE, IMG_SIZE))
-
-    input_image, input_mask = normalize(input_image, input_mask)
-
     return input_image, input_mask
 
 
@@ -275,8 +260,9 @@ def show_predictions(dataset=None, num=1):
     """
     if dataset:
         for image, true_mask in dataset.take(num):
-            pred_mask = model.predict(image)
-            plot_samples_matplotlib([image[0], true_mask, create_mask(pred_mask)])
+            inference = model.predict(image)
+            predictions = create_mask(inference)
+            plot_samples_matplotlib([image[0], true_mask[0], predictions[0]])
     else:
         #plot_samples_matplotlib([sample_image[0], sample_mask[0]])
         # The model is expecting a tensor of the size
@@ -349,6 +335,9 @@ def train_network(network_model, images_dataset, epochs, steps_per_epoch, valida
                                 validation_steps=validation_steps,
                                 validation_data=images_dataset['val'],
                                 callbacks=callbacks)
+    return model_history
+
+
 def read_image(image_path):
     img0 = tf.io.read_file(image_path)
     img0 = tf.image.decode_jpeg(img0, channels=3)
@@ -448,6 +437,8 @@ def main():
     global sample_image     #  used to display images during training
     global sample_mask      #  used to display images during training
     global model
+    global learn_rate
+    global transfer_learning
 
     # create logger
     logger = logging.getLogger('gians')
@@ -512,12 +503,12 @@ def main():
     parser.add_argument("-i", "--input_image", required=False, help="The input file to be segmented.")
     parser.add_argument("-o", "--output_file", required=False, help="The output file with the segmented image.")
     parser.add_argument("-s", "--split_percentage", nargs=3, metavar=('train_p', 'validation_p', 'test_p' ),
-                        type=float, default=[0.4, 0.3, 0.3],
+                        type=float, default=[0.7, 0.2, 0.1],
                         help="The percentage of images to be copied respectively to train/validation/test set.")
     parser.add_argument("-e", "--epochs", required=False, default=EPOCHS, type=int, help="The number of times that the entire dataset is passed forward and backward through the network during the training")
     parser.add_argument("-b", "--batch_size", required=False, default=BATCH_SIZE, type=int, help="the number of samples that are passed to the network at once during the training")
     parser.add_argument('-m', "--model", required=False, default=MODEL_UNET, 
-                        choices=(MODEL_UNET, MODEL_DEEPLABV3PLUS), 
+                        choices=(MODEL_UNET, MODEL_UNET2, MODEL_DEEPLABV3PLUS), 
                         help="The model of network to be created/used. It must be compatible with the weigths file.")
     parser.add_argument("-l", "--logs_dir", required=False, default=DEFAULT_LOGS_DIR, 
                         help="The directory where training information will be added. If it doesn't exist it will be created.")
@@ -525,6 +516,11 @@ def main():
                         help="The path where the network structure will be saved (summary). If it doesn't exist it will be created.")
     parser.add_argument("-r", "--regexp", required=False, default=REGEXP_DEFAULT, 
                         help="Regular expression to be used to inspect.")
+    parser.add_argument("-lr", "--learning_rate", required=False, type=float, default=learn_rate, 
+                        help="The learning rate of the optimizer funtion during the training.")
+    parser.add_argument('-tl', "--transfer_learning", required=False, default=None, 
+                        choices=(None, TRANSF_LEARN_IMAGENET_AND_FREEZE_DOWN), 
+                        help="The transfer learning option. Not all network models support all options.")
 
     args = parser.parse_args()
 
@@ -537,22 +533,28 @@ def main():
     network_model = args.model
     network_structure_path = args.network_structure_path
     logs_dir = args.logs_dir
+    learn_rate = args.learning_rate
+    transfer_learning = args.transfer_learning
     
     logger.debug("weights_fname=" + weights_fname)
     logger.debug("network_model=" + network_model)
     logger.debug("network_structure_path=" + network_structure_path)
     logger.debug("logs_dir=" + logs_dir)
+    logger.debug("learn_rate=" + str(learn_rate))
+    logger.debug("transfer_learning=" + str(transfer_learning))
     
     # create the unet network architecture with keras
     if network_model == MODEL_UNET:
-        model = create_model_UNet(input_size=(IMG_SIZE, IMG_SIZE, 3), classes=N_CLASSES)
+        model = create_model_UNet(input_size=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=N_CLASSES, transfer_learning=transfer_learning)
+    elif network_model == MODEL_UNET2:
+        model = create_model_UNet2(output_channels=N_CHANNELS, input_size=IMG_SIZE, transfer_learning=transfer_learning)
     elif network_model == MODEL_DEEPLABV3PLUS:
-        model = create_model_deeplabv3(input_shape=(IMG_SIZE, IMG_SIZE, 3), classes=N_CLASSES)
+        model = create_model_deeplabv3plus(input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=N_CLASSES, transfer_learning=transfer_learning)
     else:
         # BUG
         raise ValueError('Model of network not supported.') 
      # optimizer=tfa.optimizers.RectifiedAdam(lr=1e-3)
-    optimizer = Adam(learning_rate=0.0001)
+    optimizer = Adam(learning_rate=learn_rate)
     loss = tf.keras.losses.SparseCategoricalCrossentropy()
     model.compile(optimizer=optimizer,
                   loss=loss,
@@ -560,8 +562,7 @@ def main():
     
     if args.action == ACTION_TRAIN:
         if args.dataset_root_dir is None:
-            # use default root dir
-            dataset_images_path = os.path.join(dataset_root_dir, DATASET_IMG_SUBDIR)
+            raise ValueError('A value for dataset_root_dir paramenter (-dr) is required for training.')
         else:
             dataset_images_path =  os.path.join(args.dataset_root_dir, DATASET_IMG_SUBDIR)
         training_files_regexp =  os.path.join(dataset_images_path, DATASET_TRAIN_SUBDIR, FEXT_JPEG)
@@ -603,17 +604,28 @@ def main():
         dataset = {"train": train_dataset, "val": val_dataset}
 
         # -- Train Dataset --#
-        dataset['train'] = dataset['train'].map(load_image_train, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+        dataset['train'] = dataset['train'].map(load_image, num_parallel_calls=tf.data.AUTOTUNE)
+        dataset['train'] = dataset['train'].cache()
         dataset['train'] = dataset['train'].shuffle(buffer_size=BUFFER_SIZE, seed=SEED)
-        dataset['train'] = dataset['train'].repeat()
         dataset['train'] = dataset['train'].batch(batch_size)
-        dataset['train'] = dataset['train'].prefetch(buffer_size=AUTOTUNE)
+        dataset['train'] = dataset['train'].repeat()
+        dataset['train'] = dataset['train'].map(Augment())
+        dataset['train'] = dataset['train'].prefetch(buffer_size=tf.data.AUTOTUNE)
+
+        # train_batches = (
+        #     train_images
+        #     .cache()
+        #     .shuffle(BUFFER_SIZE)
+        #     .batch(BATCH_SIZE)
+        #     .repeat()
+        #     .map(Augment())
+        #     .prefetch(buffer_size=tf.data.AUTOTUNE))
 
         # -- Validation Dataset --#
-        dataset['val'] = dataset['val'].map(load_image_test)
+        dataset['val'] = dataset['val'].map(load_image)
         dataset['val'] = dataset['val'].repeat()
         dataset['val'] = dataset['val'].batch(batch_size)
-        dataset['val'] = dataset['val'].prefetch(buffer_size=AUTOTUNE)
+        dataset['val'] = dataset['val'].prefetch(buffer_size=tf.data.AUTOTUNE)
 
         logger.debug(dataset['train'])
         logger.debug(dataset['val'])
@@ -628,7 +640,25 @@ def main():
                 plot_samples_matplotlib([sample_image[0], sample_mask[0]],
                                         ["Sample image", "Ground truth"])
         
-        train_network(model, dataset, epochs, STEPS_PER_EPOCH, VALIDATION_STEPS)
+        logger.info("Start network training...")
+        model_history = train_network(model, dataset, epochs, STEPS_PER_EPOCH, VALIDATION_STEPS)
+        logger.info("Network training end.")
+
+        # TODO save plot to file
+        loss = model_history.history['loss']
+        val_loss = model_history.history['val_loss']
+        plt.figure()
+        plt.plot(model_history.epoch, loss, 'r', label='Training loss')
+        plt.plot(model_history.epoch, val_loss, 'bo', label='Validation loss')
+        plt.title('Training and Validation Loss')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss Value')
+        #  plt.ylim([0, 1])
+        plt.legend()
+        plt.show()
+
+        # show some predictions at the end of the training
+        show_predictions(dataset['train'], 3)
 
     elif args.action == ACTION_PREDICT:
         if args.input_image is None:
@@ -675,9 +705,7 @@ def main():
 
     elif args.action == ACTION_SUMMARY:
         # print network's structure summary and save whole architecture plus weigths
-        # import pydot
-        # import graphviz
-        # tf.keras.utils.plot_model(model, show_shapes=True)  #  TODO BUG graphical image doesn't get displayed
+        tf.keras.utils.plot_model(model, to_file='model_test.png', show_shapes=True, show_layer_names=True) #  TODO BUG graphical image doesn't get displayed
         model.summary()
         print("Model metrics names: " + str(model.metrics_names))
         model.save(network_structure_path)
@@ -783,8 +811,8 @@ def main():
 
     elif args.action == ACTION_EVALUATE:
         if args.dataset_root_dir is None:
-            # use default root dir
-            dataset_images_path = os.path.join(dataset_root_dir, DATASET_IMG_SUBDIR)
+            print("ERROR: you must specify the initial_root_dir parameter")
+            exit()
         else:
             dataset_images_path =  os.path.join(args.dataset_root_dir, DATASET_IMG_SUBDIR)
         test_files_regexp =  os.path.join(dataset_images_path, DATASET_TEST_SUBDIR, FEXT_JPEG)
@@ -812,10 +840,10 @@ def main():
         test_dataset = test_dataset.map(parse_image)
 
         # -- test Dataset --#
-        test_dataset = test_dataset.map(load_image_test)
+        test_dataset = test_dataset.map(load_image)
         test_dataset = test_dataset.repeat()
         test_dataset = test_dataset.batch(batch_size)
-        test_dataset = test_dataset.prefetch(buffer_size=AUTOTUNE)
+        test_dataset = test_dataset.prefetch(buffer_size=tf.data.AUTOTUNE)
 
         scores = model.evaluate(test_dataset,
                                 steps = steps_num)
@@ -841,7 +869,7 @@ def main():
         plot_samples_matplotlib(images, fnames)
 
     print("Program terminated correctly.")
-
+    logger.debug("Program end.")
 
 if __name__ == '__main__':
     main()
