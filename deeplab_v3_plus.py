@@ -23,23 +23,22 @@ from __future__ import print_function
 
 import tensorflow as tf
 
-from tensorflow.python.keras.models import Model
-from tensorflow.python.keras import layers
-from tensorflow.python.keras.layers import Input
-from tensorflow.python.keras.layers import Reshape
-from tensorflow.python.keras.layers import Activation
-from tensorflow.python.keras.layers import Concatenate
-from tensorflow.python.keras.layers import Add
-from tensorflow.python.keras.layers import Dropout
-from tensorflow.python.keras.layers import BatchNormalization
-from tensorflow.python.keras.layers import Conv2D
-from tensorflow.python.keras.layers import DepthwiseConv2D
-from tensorflow.python.keras.layers import ZeroPadding2D
-from tensorflow.python.keras.layers import GlobalAveragePooling2D
-from tensorflow.python.keras.utils.layer_utils import get_source_inputs
-from tensorflow.python.keras.utils.data_utils import get_file
-from tensorflow.python.keras import backend as K
-from tensorflow.python.keras.applications.imagenet_utils import preprocess_input
+from tensorflow.keras.models import Model
+from tensorflow.keras import layers
+from tensorflow.keras.layers import Input
+from tensorflow.keras.layers import Reshape
+from tensorflow.keras.layers import Activation
+from tensorflow.keras.layers import Concatenate
+from tensorflow.keras.layers import Add
+from tensorflow.keras.layers import Dropout
+from tensorflow.keras.layers import BatchNormalization
+from tensorflow.keras.layers import Conv2D
+from tensorflow.keras.layers import DepthwiseConv2D
+from tensorflow.keras.layers import ZeroPadding2D
+from tensorflow.keras.layers import GlobalAveragePooling2D
+from tensorflow.keras.utils import *
+from tensorflow.keras import backend as K
+from tensorflow.keras.applications.imagenet_utils import preprocess_input
 
 WEIGHTS_PATH_X = "https://github.com/bonlime/keras-deeplab-v3-plus/releases/download/1.1/deeplabv3_xception_tf_dim_ordering_tf_kernels.h5"
 WEIGHTS_PATH_MOBILE = "https://github.com/bonlime/keras-deeplab-v3-plus/releases/download/1.1/deeplabv3_mobilenetv2_tf_dim_ordering_tf_kernels.h5"
@@ -210,14 +209,15 @@ def _inverted_res_block(inputs, expansion, stride, alpha, filters, block_id, ski
     return x
 
 
-def create_model_deeplabv3(weights=None, 
-                            input_tensor=None, 
-                            input_shape=(512, 512, 3),
-                            classes=21, 
-                            backbone='xception', 
-                            OS=16, 
-                            alpha=1., 
-                            activation=None):
+def create_model_deeplabv3plus(weights='pascal_voc',
+                                input_tensor=None,
+                                input_shape=(512, 512, 3),
+                                classes=21,
+                                backbone='xception',
+                                OS=16,
+                                alpha=1.,
+                                activation=None,
+                                transfer_learning=None):
     """ Instantiates the Deeplabv3+ architecture
     Optionally loads weights pre-trained
     on PASCAL VOC or Cityscapes. This model is available for TensorFlow only.

@@ -29,7 +29,7 @@
 import tensorflow as tf
 from tensorflow.keras.layers import *
 
-def create_model_UNet(input_size=(128, 128, 3), classes=150):
+def create_model_UNet(input_size=(128, 128, 3), classes=150, transfer_learning=None):
     # -- Keras Functional API -- #
     # -- UNet Implementation -- #
     # Everything here is from tensorflow.keras.layers
