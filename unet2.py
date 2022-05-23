@@ -28,13 +28,14 @@ from tensorflow_examples.models.pix2pix import pix2pix
 
 TRANSF_LEARN_IMAGENET_AND_FREEZE_DOWN = "imagenet_freeze_down"
 
-def create_model_UNet2(output_channels:int, input_size=128, transfer_learning=None):
+def create_model_UNet2(output_channels:int, input_size=128, classes=3, transfer_learning=None):
+  print("unet2.py: WARNING parameter 'classes' not used. Reserved for future uses.")   # TODO parameter classes not used
   if transfer_learning == TRANSF_LEARN_IMAGENET_AND_FREEZE_DOWN:
     print("unet2.py: applying transfer learning: imagenet and freeze down stack.")
     w = "imagenet"
   else:
     w = None
-  base_model = tf.keras.applications.MobileNetV2(input_shape=[input_size, input_size, 3], 
+  base_model = tf.keras.applications.MobileNetV2(input_shape=[input_size, input_size, 3],
                                                 include_top=False,
                                                 weights=w)
 

@@ -1,6 +1,9 @@
 """
     Neural Network implementation for image segmentation
 
+    For more information about autotune:
+    https://www.tensorflow.org/guide/data_performance#prefetching
+
     Copyright (c) 2022 Giansalvo Gusinu <profgusinu@gmail.com>
     Copyright (c) 2021 Emil Zakirov and others
     Copyright (c) 2020 Yann LE GUILLY
@@ -64,29 +67,7 @@ WEIGHTS_FNAME_DEFAULT = 'weights.h5'
 REGEXP_DEFAULT = "*.png"
 TRANSF_LEARN_IMAGENET_AND_FREEZE_DOWN = "imagenet_freeze_down"  # must match with unet2.py
 
-# For more information about autotune:
-# https://www.tensorflow.org/guide/data_performance#prefetching
-
-# important for reproducibility
-# this allows to generate the same random numbers
-SEED = 42
-
-# Image size that we are going to use
-IMG_SIZE = 128
-# Our images are RGB (3 channels)
-N_CHANNELS = 3
-# Scene Parsing has 150 classes + `not labeled`
-N_CLASSES = 3
-
-BATCH_SIZE = 32
-
-# for reference about the BUFFER_SIZE in shuffle:
-# https://stackoverflow.com/questions/46444018/meaning-of-buffer-size-in-dataset-map-dataset-prefetch-and-dataset-shuffle
-BUFFER_SIZE = 1000
-
-EPOCHS = 20
-
-# gians PD folders structure
+# folders' structure
 DATASET_IMG_SUBDIR = "images"
 DATASET_ANNOT_SUBDIR = "annotations"
 DATASET_TRAIN_SUBDIR = "training"
@@ -96,6 +77,15 @@ DEFAULT_NETSTRUCTURE_PATH = 'model_saved/model_name'
 DEFAULT_LOGS_DIR = "logs"
 
 # global variables: default values
+# for reference about the BUFFER_SIZE in shuffle:
+# https://stackoverflow.com/questions/46444018/meaning-of-buffer-size-in-dataset-map-dataset-prefetch-and-dataset-shuffle
+BUFFER_SIZE = 1000
+EPOCHS = 100
+SEED = 42       # this allows to generate the same random numbers
+IMG_SIZE = 128  # Image size that we are going to use
+N_CHANNELS = 3  # Our images are RGB (3 channels)
+N_CLASSES = 3   # Scene Parsing has 150 classes + `not labeled` (151)
+BATCH_SIZE = 64
 dataset_root_dir = ""
 check = False
 save_some_predictions = False
@@ -521,6 +511,8 @@ def main():
     parser.add_argument('-tl', "--transfer_learning", required=False, default=None, 
                         choices=(None, TRANSF_LEARN_IMAGENET_AND_FREEZE_DOWN), 
                         help="The transfer learning option. Not all network models support all options.")
+    parser.add_argument('-c', "--classes", required=False, default=N_CLASSES, type=int,
+                        help="The number of possible classes that each pixel can belong to.")
 
     args = parser.parse_args()
 
@@ -535,21 +527,25 @@ def main():
     logs_dir = args.logs_dir
     learn_rate = args.learning_rate
     transfer_learning = args.transfer_learning
-    
+    classes_for_pixel = args.classes
+
+
     logger.debug("weights_fname=" + weights_fname)
     logger.debug("network_model=" + network_model)
     logger.debug("network_structure_path=" + network_structure_path)
     logger.debug("logs_dir=" + logs_dir)
     logger.debug("learn_rate=" + str(learn_rate))
     logger.debug("transfer_learning=" + str(transfer_learning))
-    
+    logger.debug("classes_for_pixel=" + str(classes_for_pixel))
+
+
     # create the unet network architecture with keras
     if network_model == MODEL_UNET:
-        model = create_model_UNet(input_size=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=N_CLASSES, transfer_learning=transfer_learning)
+        model = create_model_UNet(input_size=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel, transfer_learning=transfer_learning)
     elif network_model == MODEL_UNET2:
-        model = create_model_UNet2(output_channels=N_CHANNELS, input_size=IMG_SIZE, transfer_learning=transfer_learning)
+        model = create_model_UNet2(output_channels=N_CHANNELS, input_size=IMG_SIZE, classes=classes_for_pixel, transfer_learning=transfer_learning)
     elif network_model == MODEL_DEEPLABV3PLUS:
-        model = create_model_deeplabv3plus(input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=N_CLASSES, transfer_learning=transfer_learning)
+        model = create_model_deeplabv3plus(input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel, transfer_learning=transfer_learning)
     else:
         # BUG
         raise ValueError('Model of network not supported.') 
