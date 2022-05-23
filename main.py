@@ -705,13 +705,9 @@ def main():
 
     elif args.action == ACTION_SUMMARY:
         # print network's structure summary and save whole architecture plus weigths
-<<<<<<< HEAD
         # import pydot
         # import graphviz
-        # tf.keras.utils.plot_model(model, to_file='model_test.png', show_shapes=True, show_layer_names=True) #  TODO BUG graphical image doesn't get displayed
-=======
-        tf.keras.utils.plot_model(model, to_file='model_test.png', show_shapes=True, show_layer_names=True) #  TODO BUG graphical image doesn't get displayed
->>>>>>> 9aee9353e61d55314cef40c9d2a3db0b53bfffde
+        tf.keras.utils.plot_model(model, to_file='model_summary.png', show_shapes=True, show_layer_names=True) #  TODO BUG graphical image doesn't get displayed
         model.summary()
         print("Model metrics names: " + str(model.metrics_names))
         model.save(network_structure_path)
