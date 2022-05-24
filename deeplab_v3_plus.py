@@ -39,6 +39,7 @@ from tensorflow.keras.layers import GlobalAveragePooling2D
 from tensorflow.keras.utils import *
 from tensorflow.keras import backend as K
 from tensorflow.keras.applications.imagenet_utils import preprocess_input
+from tensorflow.keras.utils import get_source_inputs
 
 WEIGHTS_PATH_X = "https://github.com/bonlime/keras-deeplab-v3-plus/releases/download/1.1/deeplabv3_xception_tf_dim_ordering_tf_kernels.h5"
 WEIGHTS_PATH_MOBILE = "https://github.com/bonlime/keras-deeplab-v3-plus/releases/download/1.1/deeplabv3_mobilenetv2_tf_dim_ordering_tf_kernels.h5"
