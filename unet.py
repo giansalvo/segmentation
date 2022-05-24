@@ -30,6 +30,7 @@ import tensorflow as tf
 from tensorflow.keras.layers import *
 
 def create_model_UNet(input_size=(128, 128, 3), classes=150, transfer_learning=None):
+    print("unet.py: WARNING parameter 'transfer_learning' not used. Reserved for future uses.")   # TODO parameter not used
     # -- Keras Functional API -- #
     # -- UNet Implementation -- #
     # Everything here is from tensorflow.keras.layers
