@@ -50,6 +50,7 @@ from PIL import Image
 from deeplab_v3_plus import create_model_deeplabv3plus
 from unet import create_model_UNet
 from unet2 import create_model_UNet2
+from unet3 import create_model_UNet3
 
 # CONSTANTS
 ACTION_SPLIT = "split"
@@ -62,6 +63,7 @@ PNG_EXT = ".png"
 FEXT_JPEG = "*.jpg"
 MODEL_UNET = "unet"
 MODEL_UNET2 = "unet2"
+MODEL_UNET3 = "unet3"
 MODEL_DEEPLABV3PLUS = "deeplabv3plus"
 WEIGHTS_FNAME_DEFAULT = 'weights.h5'
 REGEXP_DEFAULT = "*.png"
@@ -498,7 +500,7 @@ def main():
     parser.add_argument("-e", "--epochs", required=False, default=EPOCHS, type=int, help="The number of times that the entire dataset is passed forward and backward through the network during the training")
     parser.add_argument("-b", "--batch_size", required=False, default=BATCH_SIZE, type=int, help="the number of samples that are passed to the network at once during the training")
     parser.add_argument('-m', "--model", required=False, default=MODEL_UNET, 
-                        choices=(MODEL_UNET, MODEL_UNET2, MODEL_DEEPLABV3PLUS), 
+                        choices=(MODEL_UNET, MODEL_UNET2, MODEL_UNET3, MODEL_DEEPLABV3PLUS), 
                         help="The model of network to be created/used. It must be compatible with the weigths file.")
     parser.add_argument("-l", "--logs_dir", required=False, default=DEFAULT_LOGS_DIR, 
                         help="The directory where training information will be added. If it doesn't exist it will be created.")
@@ -509,7 +511,7 @@ def main():
     parser.add_argument("-lr", "--learning_rate", required=False, type=float, default=learn_rate, 
                         help="The learning rate of the optimizer funtion during the training.")
     parser.add_argument('-tl', "--transfer_learning", required=False, default=None, 
-                        choices=(None, TRANSF_LEARN_IMAGENET_AND_FREEZE_DOWN), 
+                        choices=(TRANSF_LEARN_IMAGENET_AND_FREEZE_DOWN), 
                         help="The transfer learning option. Not all network models support all options.")
     parser.add_argument('-c', "--classes", required=False, default=N_CLASSES, type=int,
                         help="The number of possible classes that each pixel can belong to.")
@@ -544,6 +546,8 @@ def main():
         model = create_model_UNet(input_size=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel, transfer_learning=transfer_learning)
     elif network_model == MODEL_UNET2:
         model = create_model_UNet2(output_channels=N_CHANNELS, input_size=IMG_SIZE, classes=classes_for_pixel, transfer_learning=transfer_learning)
+    elif network_model == MODEL_UNET3:
+        model = create_model_UNet3(input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel, transfer_learning=transfer_learning)
     elif network_model == MODEL_DEEPLABV3PLUS:
         model = create_model_deeplabv3plus(input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel, transfer_learning=transfer_learning)
     else:
@@ -551,7 +555,7 @@ def main():
         raise ValueError('Model of network not supported.') 
      # optimizer=tfa.optimizers.RectifiedAdam(lr=1e-3)
     optimizer = Adam(learning_rate=learn_rate)
-    loss = tf.keras.losses.SparseCategoricalCrossentropy()
+    loss = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
     model.compile(optimizer=optimizer,
                   loss=loss,
                   metrics=['accuracy'])
