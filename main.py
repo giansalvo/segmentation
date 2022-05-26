@@ -706,7 +706,14 @@ def main():
         model_history = train_network(model, dataset, epochs, STEPS_PER_EPOCH, VALIDATION_STEPS)
         logger.info("Network training end.")
 
-        # TODO save plot to file
+        fn, fext = os.path.splitext(os.path.basename(weights_fname))
+        # Save performances to file
+        fn_perf = "perf_" + fn + "_" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + ".txt"
+        print("Saving performances to file..." + fn_perf)
+        for key in model_history.history.keys():
+            print("{}: {:.4f}".format(key,  model_history.history[key][-1]), file=open(fn_perf, 'a'))
+
+        # Plot loss functions
         loss = model_history.history['loss']
         val_loss = model_history.history['val_loss']
         plt.figure()
@@ -717,10 +724,16 @@ def main():
         plt.ylabel('Loss Value')
         #  plt.ylim([0, 1])
         plt.legend()
-        plt.show()
+        fn_plot = "plot_" + fn + "_" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + ".png"
+        print("Saving plot to file..." + fn_plot)
+        plt.savefig(fn)
+        if check:
+            plt.show()
+            # show some predictions at the end of the training
+            show_predictions(dataset['train'], 3)
+        else:
+            plt.close()
 
-        # show some predictions at the end of the training
-        show_predictions(dataset['train'], 3)
 
     elif args.action == ACTION_PREDICT:
         if args.input_image is None:
