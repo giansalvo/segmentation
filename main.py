@@ -726,7 +726,7 @@ def main():
         plt.legend()
         fn_plot = "plot_" + fn + "_" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + ".png"
         print("Saving plot to file..." + fn_plot)
-        plt.savefig(fn)
+        plt.savefig(fn_plot)
         if check:
             plt.show()
             # show some predictions at the end of the training
