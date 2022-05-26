@@ -45,6 +45,7 @@ import tensorflow as tf
 from IPython.display import clear_output
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.preprocessing import image
+from tensorflow.keras import backend as K
 from PIL import Image
 
 from deeplab_v3_plus import create_model_deeplabv3plus
@@ -211,6 +212,68 @@ def load_image(datapoint: dict) -> tuple:
     input_image, input_mask = normalize(input_image, input_mask)
     return input_image, input_mask
 
+
+# Dice coeff (F1 score)
+# https://gist.github.com/wassname/7793e2058c5c9dacb5212c0ac0b18a8a
+def dice_coef(y_true, y_pred, epsilon=1e-6):
+    """
+    Dice = (2*|X & Y|)/ (|X| + |Y|)
+         =  2*sum(|A*B|) / (sum(A^2) + sum(B^2))
+    ref: https://arxiv.org/pdf/1606.04797v1.pdf
+    """
+    intersection = K.sum(K.abs(y_true * y_pred), axis=-1)
+    sum = K.sum(K.square(y_true),axis=-1) + K.sum(K.square(y_pred),axis=-1)
+    coeff = (2. * intersection + epsilon) / (sum + epsilon)
+    return 1 - coeff
+
+
+
+# # Compute IoU coefficient (Jaccard index)
+# def iou_coef(y_true, y_pred, smooth=1e-7):
+#   intersection = K.sum(K.abs(y_true * y_pred), axis=[1,2,3])
+#   union = K.sum(y_true,[1,2,3])+K.sum(y_pred,[1,2,3])-intersection
+#   iou = K.mean((intersection + smooth) / (union + smooth), axis=0)
+#   return iou
+
+# Generalized dice loss for multi-class 3D segmentation
+# # https://github.com/keras-team/keras/issues/9395
+# def dice_coef_gattia(y_true, y_pred, smooth=1e-7):
+#     y_true_f = K.flatten(y_true)
+#     y_pred_f = K.flatten(y_pred)
+#     intersection = K.sum(y_true_f * y_pred_f)
+#     return (2. * intersection + smooth) / (K.sum(y_true_f) + K.sum(y_pred_f) + smooth)
+# # https://github.com/keras-team/keras/issues/9395
+# def dice_coef_multilabel_gattia(y_true, y_pred, numLabels=3):
+#     print("ytrue.shape=" + str(y_true.shape))
+#     print("ypred.shape=" + str(y_pred.shape))
+#     dice=0
+#     for index in range(numLabels):
+#         print("index="+str(index))
+#         dice -= dice_coef_gattia(y_true[index,:,:,:], y_pred[index,:,:,:])
+#     return dice
+
+# # Ref: salehi17, "Twersky loss function for image segmentation using 3D FCDN"
+# # -> the score is computed for each class separately and then summed
+# # alpha=beta=0.5 : dice coefficient
+# # alpha=beta=1   : tanimoto coefficient (also known as jaccard)
+# # alpha+beta=1   : produces set of F*-scores
+# # implemented by E. Moebel, 06/04/18
+# # https://github.com/keras-team/keras/issues/9395
+# def tversky_loss(y_true, y_pred):
+#     print("ytrue.shape=" + str(y_true.shape))
+#     print("ypred.shape=" + str(y_pred.shape))
+#     alpha = 0.5
+#     beta  = 0.5
+#     ones = K.ones(K.shape(y_true))
+#     p0 = y_pred      # proba that voxels are class i
+#     p1 = ones-y_pred # proba that voxels are not class i
+#     g0 = y_true
+#     g1 = ones-y_true
+#     num = K.sum(p0*g0, (0,1,2))
+#     den = num + alpha*K.sum(p0*g1,(0,1,2)) + beta*K.sum(p1*g0,(0,1,2))
+#     T = K.sum(num/den) # when summing over classes, T has dynamic range [0 Ncl]
+#     Ncl = K.cast(K.shape(y_true)[-1], 'float32')
+#     return Ncl-T
 
 def create_mask(pred_mask: tf.Tensor) -> tf.Tensor:
     """Return a filter mask with the top 1 predicitons
@@ -552,13 +615,12 @@ def main():
         model = create_model_deeplabv3plus(input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel, transfer_learning=transfer_learning)
     else:
         # BUG
-        raise ValueError('Model of network not supported.') 
+        raise ValueError('BUG: Model of network not supported.')
      # optimizer=tfa.optimizers.RectifiedAdam(lr=1e-3)
     optimizer = Adam(learning_rate=learn_rate)
     loss = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
-    model.compile(optimizer=optimizer,
-                  loss=loss,
-                  metrics=['accuracy'])
+    metrics = ['accuracy', dice_coef]
+    model.compile(optimizer=optimizer, loss=loss, metrics=metrics)
     
     if args.action == ACTION_TRAIN:
         if args.dataset_root_dir is None:

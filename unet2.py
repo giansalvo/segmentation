@@ -24,6 +24,7 @@
     DEALINGS IN THE SOFTWARE.
 """
 import tensorflow as tf
+# pip install -q git+https://github.com/tensorflow/examples.git
 from tensorflow_examples.models.pix2pix import pix2pix
 
 TRANSF_LEARN_IMAGENET_AND_FREEZE_DOWN = "imagenet_freeze_down"
