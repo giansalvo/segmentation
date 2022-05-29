@@ -654,6 +654,7 @@ def main():
         logger.debug("epochs=" + str(epochs))
         logger.debug("batch_size=" + str(batch_size))
         logger.debug("TRAINSET=" + training_files_regexp)
+        training_start = datetime.datetime.now().replace(microsecond=0)
 
         # Creating a source dataset
         TRAINSET_SIZE = len(glob(training_files_regexp))
@@ -724,12 +725,23 @@ def main():
         
         logger.info("Start network training...")
         model_history = train_network(model, dataset, epochs, STEPS_PER_EPOCH, VALIDATION_STEPS)
+        training_end = datetime.datetime.now().replace(microsecond=0)
         logger.info("Network training end.")
 
         fn, _ = os.path.splitext(os.path.basename(weights_fname))
+        
         # Save performances to file
         fn_perf = "perf_" + fn + "_" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + ".txt"
         print("Saving performances to file..." + fn_perf)
+        # Save invocation command line
+        print("Invocation command: ", end="", file=open(fn_perf, 'a'))
+        narg = len(sys.argv)
+        for x in range(narg):
+            print(sys.argv[x], end = " ", file=open(fn_perf, 'a'))
+        print("\n", file=open(fn_perf, 'a'))
+        # Save performance information        
+        training_time = training_end - training_start
+        print("Training time: {}\n".format(training_time), file=open(fn_perf, 'a'))
         for key in model_history.history.keys():
             print("{}: {:.4f}".format(key,  model_history.history[key][-1]), file=open(fn_perf, 'a'))
 
