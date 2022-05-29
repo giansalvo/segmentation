@@ -303,7 +303,7 @@ def create_mask(pred_mask: tf.Tensor) -> tf.Tensor:
     return pred_mask
 
 
-def show_predictions(dataset=None, num=1):
+def show_predictions(dataset=None, num=1, fname=None):
     """Show a sample prediction.
 
     Parameters
@@ -314,10 +314,18 @@ def show_predictions(dataset=None, num=1):
         Number of sample to show, by default 1
     """
     if dataset:
+        if fname:
+                fn, fext = os.path.splitext(os.path.basename(fname))
+                i = 0
         for image, true_mask in dataset.take(num):
+            if fname:
+                fname = "{}_{:03d}.png".format(fn, i)
+                i+=1
             inference = model.predict(image)
             predictions = create_mask(inference)
-            plot_samples_matplotlib([image[0], true_mask[0], predictions[0]])
+            plot_samples_matplotlib([image[0], true_mask[0], predictions[0]], 
+                                    labels_list=["Sample image", "Ground Truth", "Prediction"],
+                                    fname=fname)
     else:
         #plot_samples_matplotlib([sample_image[0], sample_mask[0]])
         # The model is expecting a tensor of the size
@@ -331,7 +339,9 @@ def show_predictions(dataset=None, num=1):
         # inference -> [1, IMG_SIZE, IMG_SIZE, N_CLASS]
         pred_mask = create_mask(inference)
         # pred_mask -> [1, IMG_SIZE, IMG_SIZE, 1]
-        plot_samples_matplotlib([sample_image[0], sample_mask[0], pred_mask[0]])
+        plot_samples_matplotlib([sample_image[0], sample_mask[0], pred_mask[0]],
+                                labels_list=["Sample image", "Ground Truth", "Prediction"],
+                                fname=fname)
 
 
 def save_predictions(epoch, dataset=None, num=1):
@@ -445,7 +455,7 @@ def generate_colormap_image(input_fname):
 #     return overlay
 
 
-def plot_samples_matplotlib(display_list, labels_list=None, figsize=None):
+def plot_samples_matplotlib(display_list, labels_list=None, figsize=None, fname=None):
     NIMG_PER_COLS = 6
     if figsize is None:
         PX = 1/plt.rcParams['figure.dpi']  # pixel in inches
@@ -471,15 +481,23 @@ def plot_samples_matplotlib(display_list, labels_list=None, figsize=None):
                     axes[i_img].imshow(tf.keras.preprocessing.image.array_to_img(display_list[i_img]))
         else:
                 if nrows > 1:
+                    if labels_list is not None:
+                        axes[i, j].set_title(labels_list[i_img])
                     axes[i, j].imshow(display_list[i_img])
                 else:
+                    if labels_list is not None:
+                        axes[i_img].set_title(labels_list[i_img])
                     axes[i_img].imshow(display_list[i_img])
-
     # Hide x labels and tick labels for top plots and y ticks for right plots.
     for axes in axes.flat:
         axes.label_outer()
 
-    plt.show()
+    if fname is None:
+        plt.show()
+    else:
+        print ("Saving prediction to file {}...".format(fname))
+        plt.savefig(fname)
+        plt.close()
 
 #########################
 # MAIN STARTS HERE
@@ -674,6 +692,8 @@ def main():
         dataset['train'] = dataset['train'].map(Augment())
         dataset['train'] = dataset['train'].prefetch(buffer_size=tf.data.AUTOTUNE)
 
+
+
         # train_batches = (
         #     train_images
         #     .cache()
@@ -706,7 +726,7 @@ def main():
         model_history = train_network(model, dataset, epochs, STEPS_PER_EPOCH, VALIDATION_STEPS)
         logger.info("Network training end.")
 
-        fn, fext = os.path.splitext(os.path.basename(weights_fname))
+        fn, _ = os.path.splitext(os.path.basename(weights_fname))
         # Save performances to file
         fn_perf = "perf_" + fn + "_" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + ".txt"
         print("Saving performances to file..." + fn_perf)
@@ -729,10 +749,11 @@ def main():
         plt.savefig(fn_plot)
         if check:
             plt.show()
-            # show some predictions at the end of the training
-            show_predictions(dataset['train'], 3)
         else:
             plt.close()
+        # show some predictions at the end of the training
+        fn_pred = "pred_" + fn + "_" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + ".png"
+        show_predictions(dataset['train'], 3, fname = fn_pred)
 
 
     elif args.action == ACTION_PREDICT:
