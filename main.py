@@ -955,6 +955,7 @@ def main():
         test_dataset = test_dataset.batch(batch_size)
         test_dataset = test_dataset.prefetch(buffer_size=tf.data.AUTOTUNE)
 
+        model.load_weights(weights_fname)
         scores = model.evaluate(test_dataset,
                                 steps = steps_num)
         print(str(dict(zip(model.metrics_names, scores))))
