@@ -461,27 +461,28 @@ def create_model_deeplabv3plus(weights='pascal_voc',
 
     model = Model(inputs, x, name='deeplabv3plus')
 
-    # # load weights
-    # if weights == 'pascal_voc':
-    #     if backbone == 'xception':
-    #         weights_path = get_file('deeplabv3_xception_tf_dim_ordering_tf_kernels.h5',
-    #                                 WEIGHTS_PATH_X,
-    #                                 cache_subdir='models')
-    #     else:
-    #         weights_path = get_file('deeplabv3_mobilenetv2_tf_dim_ordering_tf_kernels.h5',
-    #                                 WEIGHTS_PATH_MOBILE,
-    #                                 cache_subdir='models')
-    #     model.load_weights(weights_path, by_name=True)
-    # elif weights == 'cityscapes':
-    #     if backbone == 'xception':
-    #         weights_path = get_file('deeplabv3_xception_tf_dim_ordering_tf_kernels_cityscapes.h5',
-    #                                 WEIGHTS_PATH_X_CS,
-    #                                 cache_subdir='models')
-    #     else:
-    #         weights_path = get_file('deeplabv3_mobilenetv2_tf_dim_ordering_tf_kernels_cityscapes.h5',
-    #                                 WEIGHTS_PATH_MOBILE_CS,
-    #                                 cache_subdir='models')
-    #     model.load_weights(weights_path, by_name=True)
+    # load weights
+    if weights == 'pascal_voc':
+        if backbone == 'xception':
+            weights_path = get_file('deeplabv3_xception_tf_dim_ordering_tf_kernels.h5',
+                                    WEIGHTS_PATH_X,
+                                    cache_subdir='models')
+        else:
+            weights_path = get_file('deeplabv3_mobilenetv2_tf_dim_ordering_tf_kernels.h5',
+                                    WEIGHTS_PATH_MOBILE,
+                                    cache_subdir='models')
+        model.load_weights(weights_path, by_name=True)
+    elif weights == 'cityscapes':
+        if backbone == 'xception':
+            weights_path = get_file('deeplabv3_xception_tf_dim_ordering_tf_kernels_cityscapes.h5',
+                                    WEIGHTS_PATH_X_CS,
+                                    cache_subdir='models')
+        else:
+            print("deeplab_v3_plus.py: get_file deeplabv3_mobilenetv2_tf_dim_ordering_tf_kernels_cityscapes.h5")
+            weights_path = get_file('deeplabv3_mobilenetv2_tf_dim_ordering_tf_kernels_cityscapes.h5',
+                                    WEIGHTS_PATH_MOBILE_CS,
+                                    cache_subdir='models')
+        model.load_weights(weights_path, by_name=True)
     return model
 
 def preprocess_input(x):
