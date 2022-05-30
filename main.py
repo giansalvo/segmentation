@@ -66,9 +66,13 @@ MODEL_UNET = "unet"
 MODEL_UNET2 = "unet2"
 MODEL_UNET3 = "unet3"
 MODEL_DEEPLABV3PLUS = "deeplabv3plus"
+MODEL_DEEPLABV3PLUS_XCEPTION = "deeplabv3plus_xception"
+MODEL_DEEPLABV3PLUS_MOBILENETV2 = "deeplabv3plus_mobilenetv2"
 WEIGHTS_FNAME_DEFAULT = 'weights.h5'
 REGEXP_DEFAULT = "*.png"
 TRANSF_LEARN_IMAGENET_AND_FREEZE_DOWN = "imagenet_freeze_down"  # must match with unet2.py
+TRANSF_LEARN_PASCAL_VOC = "pascal_voc"
+TRANSF_LEARN_CITYSCAPES = "cityscapes"
 
 # folders' structure
 DATASET_IMG_SUBDIR = "images"
@@ -103,7 +107,7 @@ learn_rate = 0.001
 transfer_learning = None
 
 # COPYRIGHT NOTICE AND PROGRAM VERSION
-COPYRIGHT_NOTICE = "Copyright (C) 2022 Giansalvo Gusinu <profgusinu@gmail.com>"
+COPYRIGHT_NOTICE = "Copyright (C) 2022 Giansalvo Gusinu"
 PROGRAM_VERSION = "1.0"
 
 
@@ -581,7 +585,7 @@ def main():
     parser.add_argument("-e", "--epochs", required=False, default=EPOCHS, type=int, help="The number of times that the entire dataset is passed forward and backward through the network during the training")
     parser.add_argument("-b", "--batch_size", required=False, default=BATCH_SIZE, type=int, help="the number of samples that are passed to the network at once during the training")
     parser.add_argument('-m', "--model", required=False, default=MODEL_UNET, 
-                        choices=(MODEL_UNET, MODEL_UNET2, MODEL_UNET3, MODEL_DEEPLABV3PLUS), 
+                        choices=(MODEL_UNET, MODEL_UNET2, MODEL_UNET3, MODEL_DEEPLABV3PLUS, MODEL_DEEPLABV3PLUS_XCEPTION, MODEL_DEEPLABV3PLUS_MOBILENETV2), 
                         help="The model of network to be created/used. It must be compatible with the weigths file.")
     parser.add_argument("-l", "--logs_dir", required=False, default=DEFAULT_LOGS_DIR, 
                         help="The directory where training information will be added. If it doesn't exist it will be created.")
@@ -592,7 +596,7 @@ def main():
     parser.add_argument("-lr", "--learning_rate", required=False, type=float, default=learn_rate, 
                         help="The learning rate of the optimizer funtion during the training.")
     parser.add_argument('-tl', "--transfer_learning", required=False, default=None, 
-                        choices=(TRANSF_LEARN_IMAGENET_AND_FREEZE_DOWN), 
+                        choices=(TRANSF_LEARN_IMAGENET_AND_FREEZE_DOWN, TRANSF_LEARN_PASCAL_VOC, TRANSF_LEARN_CITYSCAPES), 
                         help="The transfer learning option. Not all network models support all options.")
     parser.add_argument('-c', "--classes", required=False, default=N_CLASSES, type=int,
                         help="The number of possible classes that each pixel can belong to.")
@@ -629,12 +633,24 @@ def main():
         model = create_model_UNet2(output_channels=N_CHANNELS, input_size=IMG_SIZE, classes=classes_for_pixel, transfer_learning=transfer_learning)
     elif network_model == MODEL_UNET3:
         model = create_model_UNet3(input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel, transfer_learning=transfer_learning)
-    elif network_model == MODEL_DEEPLABV3PLUS:
-        model = create_model_deeplabv3plus(input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel, transfer_learning=transfer_learning)
+    elif network_model == MODEL_DEEPLABV3PLUS_XCEPTION or network_model == MODEL_DEEPLABV3PLUS:
+        if transfer_learning == TRANSF_LEARN_PASCAL_VOC:
+            model = create_model_deeplabv3plus(weights='pascal_voc', backbone='xception', input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel)
+        elif transfer_learning is TRANSF_LEARN_CITYSCAPES:
+            model = create_model_deeplabv3plus(weights='cityscapes', backbone='xception', input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel)
+        else:
+            model = create_model_deeplabv3plus(weights=None, backbone='xception', input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel)
+    elif network_model == MODEL_DEEPLABV3PLUS_MOBILENETV2:
+        if transfer_learning == TRANSF_LEARN_PASCAL_VOC:
+            model = create_model_deeplabv3plus(weights='pascal_voc', backbone='mobilenetv2', input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel)
+        elif transfer_learning == TRANSF_LEARN_CITYSCAPES:
+            model = create_model_deeplabv3plus(weights='cityscapes', backbone='mobilenetv2', input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel)
+        else:
+            model = create_model_deeplabv3plus(weights=None, backbone='mobilenetv2', input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel)
     else:
         # BUG
         raise ValueError('BUG: Model of network not supported.')
-     # optimizer=tfa.optimizers.RectifiedAdam(lr=1e-3)
+    # optimizer=tfa.optimizers.RectifiedAdam(lr=1e-3)
     optimizer = Adam(learning_rate=learn_rate)
     loss = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
     metrics = ['accuracy', dice_coef]
