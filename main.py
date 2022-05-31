@@ -41,11 +41,14 @@ from glob import glob
 
 import matplotlib.pyplot as plt
 import numpy as np
+from numpy.random import seed
+
 import tensorflow as tf
 from IPython.display import clear_output
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.preprocessing import image
 from tensorflow.keras import backend as K
+from tensorflow.keras.backend import manual_variable_initialization
 from PIL import Image
 
 from deeplab_v3_plus import create_model_deeplabv3plus
@@ -65,10 +68,9 @@ FEXT_JPEG = "*.jpg"
 MODEL_UNET = "unet"
 MODEL_UNET2 = "unet2"
 MODEL_UNET3 = "unet3"
-MODEL_DEEPLABV3PLUS = "deeplabv3plus"
+MODEL_DEEPLABV3PLUS = "deeplabv3plus"   # DEPRECATED
 MODEL_DEEPLABV3PLUS_XCEPTION = "deeplabv3plus_xception"
 MODEL_DEEPLABV3PLUS_MOBILENETV2 = "deeplabv3plus_mobilenetv2"
-WEIGHTS_FNAME_DEFAULT = 'weights.h5'
 REGEXP_DEFAULT = "*.png"
 TRANSF_LEARN_IMAGENET_AND_FREEZE_DOWN = "imagenet_freeze_down"  # must match with unet2.py
 TRANSF_LEARN_PASCAL_VOC = "pascal_voc"
@@ -80,7 +82,6 @@ DATASET_ANNOT_SUBDIR = "annotations"
 DATASET_TRAIN_SUBDIR = "training"
 DATASET_VAL_SUBDIR = "validation"
 DATASET_TEST_SUBDIR = "test"
-DEFAULT_NETSTRUCTURE_PATH = 'model_saved/model_name'
 DEFAULT_LOGS_DIR = "logs"
 
 # global variables: default values
@@ -96,9 +97,8 @@ BATCH_SIZE = 64
 dataset_root_dir = ""
 check = False
 save_some_predictions = False
-weights_fname = WEIGHTS_FNAME_DEFAULT
-net_model = MODEL_UNET
-network_structure_path = DEFAULT_NETSTRUCTURE_PATH
+weights_fname = None
+network_structure_path = None
 logs_dir = DEFAULT_LOGS_DIR
 sample_image = None
 sample_mask = None
@@ -178,7 +178,7 @@ def normalize(input_image: tf.Tensor, input_mask: tf.Tensor) -> tuple:
 
 
 class Augment(tf.keras.layers.Layer):
-  def __init__(self, seed=42):
+  def __init__(self, seed=SEED):
     super().__init__()
     # both use the same seed, so they'll make the same random changes.
     self.augment_inputs = tf.keras.layers.RandomFlip(mode="horizontal", seed=seed)
@@ -403,6 +403,7 @@ def train_network(network_model, images_dataset, epochs, steps_per_epoch, valida
                                 steps_per_epoch=steps_per_epoch,
                                 validation_steps=validation_steps,
                                 validation_data=images_dataset['val'],
+                                shuffle=False,
                                 callbacks=callbacks)
     return model_history
 
@@ -503,6 +504,46 @@ def plot_samples_matplotlib(display_list, labels_list=None, figsize=None, fname=
         plt.savefig(fname)
         plt.close()
 
+
+def do_evaluate(dataset_root_dir, batch_size, perf_file):
+    global logger
+
+    dataset_images_path =  os.path.join(dataset_root_dir, DATASET_IMG_SUBDIR)
+    test_files_regexp =  os.path.join(dataset_images_path, DATASET_TEST_SUBDIR, FEXT_JPEG)
+
+    # Creating a source dataset
+    testset_size = len(glob(test_files_regexp))
+    print(f"The test Dataset contains {testset_size} images.")
+
+    if testset_size == 0:
+        print("ERROR: the test datasets must be not empty!")
+        exit()
+
+    steps_num = testset_size // batch_size
+    logger.debug("steps_num=" + str(steps_num))
+    if steps_num == 0:
+        print("ERROR: steps_num cannot be zero. Increase number of images or reduce batch_size.")
+        exit()
+
+    test_dataset = tf.data.Dataset.list_files(test_files_regexp, seed=SEED)
+    test_dataset = test_dataset.map(parse_image)
+
+    # -- test Dataset --#
+    test_dataset = test_dataset.map(load_image)
+    test_dataset = test_dataset.repeat()
+    test_dataset = test_dataset.batch(batch_size)
+    test_dataset = test_dataset.prefetch(buffer_size=tf.data.AUTOTUNE)
+
+    # model.load_weights(weights_fname)
+    scores = model.evaluate(test_dataset,
+                            steps = steps_num)
+    results = list(zip(model.metrics_names, scores))
+    # Print results to file
+    print("\nEvaluation on test set:", file=open(perf_file, 'a'))
+    print(str(dict(zip(model.metrics_names, scores))), file=open(perf_file, 'a'))
+                          
+
+
 #########################
 # MAIN STARTS HERE
 #########################
@@ -516,6 +557,11 @@ def main():
     global model
     global learn_rate
     global transfer_learning
+    global logger
+
+    manual_variable_initialization(True)    # avoid that Tf/keras automatic initializazion
+    seed(SEED)                              # initialize numpy random generator
+    tf.random.set_seed(SEED)                # initialize Tensorflow random generator
 
     # create logger
     logger = logging.getLogger('gians')
@@ -575,7 +621,7 @@ def main():
                         help="Save some prediction at the end of each epoch during training.")
     parser.add_argument('-ir', '--initial_root_dir', required=False, help="The initial root directory of images and trimaps.")
     parser.add_argument('-dr', '--dataset_root_dir', required=False, help="The root directory of the dataset.")
-    parser.add_argument("-w", "--weigths_file", required=False, default=WEIGHTS_FNAME_DEFAULT,
+    parser.add_argument("-w", "--weigths_file", required=False,
                         help="The weigths file to be loaded/saved. It must be compatible with the network model chosen.")
     parser.add_argument("-i", "--input_image", required=False, help="The input file to be segmented.")
     parser.add_argument("-o", "--output_file", required=False, help="The output file with the segmented image.")
@@ -584,12 +630,12 @@ def main():
                         help="The percentage of images to be copied respectively to train/validation/test set.")
     parser.add_argument("-e", "--epochs", required=False, default=EPOCHS, type=int, help="The number of times that the entire dataset is passed forward and backward through the network during the training")
     parser.add_argument("-b", "--batch_size", required=False, default=BATCH_SIZE, type=int, help="the number of samples that are passed to the network at once during the training")
-    parser.add_argument('-m', "--model", required=False, default=MODEL_UNET, 
+    parser.add_argument('-m', "--model", required=False,
                         choices=(MODEL_UNET, MODEL_UNET2, MODEL_UNET3, MODEL_DEEPLABV3PLUS, MODEL_DEEPLABV3PLUS_XCEPTION, MODEL_DEEPLABV3PLUS_MOBILENETV2), 
                         help="The model of network to be created/used. It must be compatible with the weigths file.")
     parser.add_argument("-l", "--logs_dir", required=False, default=DEFAULT_LOGS_DIR, 
                         help="The directory where training information will be added. If it doesn't exist it will be created.")
-    parser.add_argument("-nsp", "--network_structure_path", required=False, default=DEFAULT_NETSTRUCTURE_PATH, 
+    parser.add_argument("-nsp", "--network_structure_path", required=False,
                         help="The path where the network structure will be saved (summary). If it doesn't exist it will be created.")
     parser.add_argument("-r", "--regexp", required=False, default=REGEXP_DEFAULT, 
                         help="Regular expression to be used to inspect.")
@@ -603,6 +649,7 @@ def main():
 
     args = parser.parse_args()
 
+    dataset_root_dir = args.dataset_root_dir
     check = args.check
     save_some_predictions = args.save_some_predictions
     regexp = args.regexp
@@ -616,15 +663,14 @@ def main():
     transfer_learning = args.transfer_learning
     classes_for_pixel = args.classes
 
-
-    logger.debug("weights_fname=" + weights_fname)
-    logger.debug("network_model=" + network_model)
-    logger.debug("network_structure_path=" + network_structure_path)
-    logger.debug("logs_dir=" + logs_dir)
+    logger.debug("dataset_root_dir=" + str(dataset_root_dir))
+    logger.debug("weights_fname=" + str(weights_fname))
+    logger.debug("network_model=" + str(network_model))
+    logger.debug("network_structure_path=" + str(network_structure_path))
+    logger.debug("logs_dir=" + str(logs_dir))
     logger.debug("learn_rate=" + str(learn_rate))
     logger.debug("transfer_learning=" + str(transfer_learning))
     logger.debug("classes_for_pixel=" + str(classes_for_pixel))
-
 
     # create the unet network architecture with keras
     if network_model == MODEL_UNET:
@@ -653,14 +699,16 @@ def main():
     # optimizer=tfa.optimizers.RectifiedAdam(lr=1e-3)
     optimizer = Adam(learning_rate=learn_rate)
     loss = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
-    metrics = ['accuracy', dice_coef]
+    metrics = ['sparse_categorical_accuracy', dice_coef]
     model.compile(optimizer=optimizer, loss=loss, metrics=metrics)
     
     if args.action == ACTION_TRAIN:
+        if weights_fname is None:
+            raise ValueError('You must specify a weights filename parameter (-w) for training.')
         if args.dataset_root_dir is None:
             raise ValueError('A value for dataset_root_dir paramenter (-dr) is required for training.')
         else:
-            dataset_images_path =  os.path.join(args.dataset_root_dir, DATASET_IMG_SUBDIR)
+            dataset_images_path =  os.path.join(dataset_root_dir, DATASET_IMG_SUBDIR)
         training_files_regexp =  os.path.join(dataset_images_path, DATASET_TRAIN_SUBDIR, FEXT_JPEG)
         validation_files_regexp = os.path.join(dataset_images_path, DATASET_VAL_SUBDIR, FEXT_JPEG)
 
@@ -703,13 +751,11 @@ def main():
         # -- Train Dataset --#
         dataset['train'] = dataset['train'].map(load_image, num_parallel_calls=tf.data.AUTOTUNE)
         dataset['train'] = dataset['train'].cache()
-        dataset['train'] = dataset['train'].shuffle(buffer_size=BUFFER_SIZE, seed=SEED)
+        # dataset['train'] = dataset['train'].shuffle(buffer_size=BUFFER_SIZE, seed=SEED)
         dataset['train'] = dataset['train'].batch(batch_size)
         dataset['train'] = dataset['train'].repeat()
         dataset['train'] = dataset['train'].map(Augment())
         dataset['train'] = dataset['train'].prefetch(buffer_size=tf.data.AUTOTUNE)
-
-
 
         # train_batches = (
         #     train_images
@@ -779,10 +825,18 @@ def main():
             plt.show()
         else:
             plt.close()
-        # show some predictions at the end of the training
+        # Save some predictions at the end of the training
+        print("Saving some predictions to file...")
         fn_pred = "pred_" + fn + "_" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + ".png"
         show_predictions(dataset['train'], 3, fname = fn_pred)
+        # Save all network structure (model, weights, optimizer, ...)
+        fn_model = "model_" + fn + "_" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        print("Saving network model and weights to file..." + fn_model)
+        model.save(fn_model)
 
+        # Evaluate model on test set
+        print("Evaluating model on test set...")
+        do_evaluate(dataset_root_dir=dataset_root_dir, batch_size=batch_size, perf_file=fn_perf)
 
     elif args.action == ACTION_PREDICT:
         if args.input_image is None:
@@ -801,11 +855,19 @@ def main():
         out_cmap_fname = fn + "_cmap.png"
         logger.debug("output_fname=" + output_fname)
 
-        model.load_weights(weights_fname)
+        if network_structure_path is not None:
+            print("Loading network model from " + network_structure_path)
+            model = tf.keras.models.load_model(network_structure_path, custom_objects={'dice_coef': dice_coef})
+        elif weights_fname is not None:
+            print("Loading network weights from file " + weights_fname)
+            model.load_weights(weights_fname)
+        else:
+            print("ERROR: network_structure_path or weights_fname argument must be provided.")
+            exit(1)
 
         img0 = read_image(input_fname)
-        
-        prediction = infer(model=model, image_tensor=img0)
+        img_tensor = tf.cast(img0, tf.float32) / 255.0    # normalize
+        prediction = infer(model=model, image_tensor=img_tensor)
         
         # compute trimap output and save image to disk
         print("Saving trimap output segmented image to file: " + out_3map_fname)
@@ -834,7 +896,9 @@ def main():
         tf.keras.utils.plot_model(model, to_file='model_summary.png', show_shapes=True, show_layer_names=True) #  TODO BUG graphical image doesn't get displayed
         model.summary()
         print("Model metrics names: " + str(model.metrics_names))
-        model.save(network_structure_path)
+        if network_structure_path is not None:
+            print ("Save network model to: " + str(network_structure_path))
+            model.save(network_structure_path)
     
     elif args.action == ACTION_SPLIT:
         # split images and trimap in train/validate/test by creating the dataset folder hierarchy
@@ -936,6 +1000,7 @@ def main():
             shutil.copy2(fn, annot_dir)
 
     elif args.action == ACTION_EVALUATE:
+        # TODO replace with a call to do_evaluate()
         if args.dataset_root_dir is None:
             print("ERROR: you must specify the initial_root_dir parameter")
             exit()
@@ -971,7 +1036,15 @@ def main():
         test_dataset = test_dataset.batch(batch_size)
         test_dataset = test_dataset.prefetch(buffer_size=tf.data.AUTOTUNE)
 
-        model.load_weights(weights_fname)
+        if network_structure_path is not None:
+            print("Loading network model from " + network_structure_path)
+            model = tf.keras.models.load_model(network_structure_path, custom_objects={'dice_coef': dice_coef})
+        elif weights_fname is not None:
+            print("Loading network weights from file " + weights_fname)
+            model.load_weights(weights_fname)
+        else:
+            print("ERROR: network_structure_path or weights_fname argument must be provided.")
+            exit(1)
         scores = model.evaluate(test_dataset,
                                 steps = steps_num)
         print(str(dict(zip(model.metrics_names, scores))))
