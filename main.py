@@ -396,7 +396,7 @@ def train_network(network_model, images_dataset, epochs, steps_per_epoch, valida
         tf.keras.callbacks.ModelCheckpoint(weights_fname, 
                                         verbose=1,
                                         save_best_only=True,
-                                        save_weights_only=True)
+                                        save_weights_only=False)
     ]
     model_history = network_model.fit(images_dataset['train'], 
                                 epochs=epochs,
@@ -534,7 +534,6 @@ def do_evaluate(dataset_root_dir, batch_size, perf_file):
     test_dataset = test_dataset.batch(batch_size)
     test_dataset = test_dataset.prefetch(buffer_size=tf.data.AUTOTUNE)
 
-    # model.load_weights(weights_fname)
     scores = model.evaluate(test_dataset,
                             steps = steps_num)
     results = list(zip(model.metrics_names, scores))
