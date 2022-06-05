@@ -48,6 +48,16 @@ ANONYMIZE_Y_DEFAULT = 0
 ANONYMIZE_W_DEFAULT = 1240
 ANONYMIZE_H_DEFAULT = 100
 
+# FOLDERS
+IMAGES_ORIG = "images_jpg"
+IMAGES_SUBDIR = "images"
+ANNOTATIONS_ORIG = "annotations_jpg"
+ANNOTATIONS_SUBDIR = "annotations"
+
+# VALUES
+VALUE_FOREGROUND    = 1
+VALUE_BACKGROUND    = 3
+
 # COLOUR MASKS
 cyan_lower = np.array([34, 85, 30])
 cyan_upper = np.array([180, 252, 234])
@@ -310,41 +320,61 @@ def crop_all_files(input_directory, output_directory,
 
 def transform_all_annotations(input_directory, output_directory):
     ext = ('.png')
+    i = 0
     for fname in os.listdir(input_directory):
         if fname.endswith(ext):
             fn, fext = os.path.splitext(os.path.basename(fname))
-            img = cv2.imread(input_directory + "/" + fname)
-            mask = cv2.threshold(img, 127, 255, cv2.THRESH_BINARY)[1]
-            mask[mask == 255] = 2  # foreground
-            # Use the cvtColor() function to grayscale the image
-            mask = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
-            cv2.imwrite(output_directory + "/" + fn + ".png", mask,  [int(cv2.IMWRITE_PNG_COMPRESSION), 0])
+            fpath = os.path.join(input_directory, fname)
+            img = cv2.imread(fpath)
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            # print("before value conversion:")
+            # for i in range(256):
+            #     n = np.sum(img == i)
+            #     print("number of {}={}".format(i, n))
+            img_h, img_w = img.shape
+            mask = np.empty((img_h, img_w, 1), dtype = "uint8")
+            mask[:] = VALUE_BACKGROUND
+            mask[img >= 127] = VALUE_FOREGROUND
+            # print("after value conversion:")
+            # for i in range(256):
+            #     n = np.sum(mask == i)
+            #     print("number of {}={}".format(i, n))
+            fpath = os.path.join(output_directory, fn + ".png")
+            cv2.imwrite(fpath, mask,  [int(cv2.IMWRITE_PNG_COMPRESSION), 0])
+        if i % 50 == 0:
+            print (".", end = "", flush=True)
+        i += 1
+    print("\n")
     return
 
 
 def transform_all_image_samples(input_directory, output_directory):
     ext = ('.jpg')
+    i = 0
     for fname in os.listdir(input_directory):
         if fname.endswith(ext):
             fn, fext = os.path.splitext(os.path.basename(fname))
             # read file and decode image
-            img0 = tf.io.read_file(input_directory + "/" + fname)
+            fpath = os.path.join(input_directory, fname)
+            img0 = tf.io.read_file(fpath)
             img0 = tf.image.decode_jpeg(img0, channels=3)
             # cast
             # img0 = tf.cast(img0, tf.float32) / 255.0    # normalize
             img1 = tf.cast(img0, tf.uint8)
             # encode and write
             img1 = tf.image.encode_jpeg(img1)
-            tf.io.write_file(output_directory + "/" + fn + ".jpg", img1)
+            fpath = os.path.join(output_directory, fn + ".jpg")
+            tf.io.write_file(fpath, img1)
+        if i % 50 == 0:
+            print (".", end = "", flush=True)
+        i += 1
+    print("\n")
     return
 
 
+################
 #  main
-IMAGES_ORIG = "images_jpg"
-IMAGES_SUBDIR = "images_modif"
-ANNOTATIONS_ORIG = "annotations_jpg"
-ANNOTATIONS_SUBDIR = "annotations_modif"
-
+################
 print("Creating images subdir {}...".format(IMAGES_SUBDIR))
 os.mkdir(IMAGES_SUBDIR)
 print("Converting all sample images...")
