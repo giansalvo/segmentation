@@ -55,6 +55,7 @@ from deeplab_v3_plus import create_model_deeplabv3plus
 from unet import create_model_UNet
 from unet2 import create_model_UNet2
 from unet3 import create_model_UNet3
+from unet_us import create_model_UNet_US
 
 # CONSTANTS
 ACTION_SPLIT = "split"
@@ -68,6 +69,7 @@ FEXT_JPEG = "*.jpg"
 MODEL_UNET = "unet"
 MODEL_UNET2 = "unet2"
 MODEL_UNET3 = "unet3"
+MODEL_UNET_US = "unet_us"
 MODEL_DEEPLABV3PLUS = "deeplabv3plus"   # DEPRECATED
 MODEL_DEEPLABV3PLUS_XCEPTION = "deeplabv3plus_xception"
 MODEL_DEEPLABV3PLUS_MOBILENETV2 = "deeplabv3plus_mobilenetv2"
@@ -588,7 +590,7 @@ def main():
         epilog = "Examples:\n"
                 "       Prepare the dataset directories hierarchy starting from images/annotations initial directories:\n"
                 "         $python %(prog)s split -ir initial_root_dir -dr dataset_root_dir\n"
-                "         $python %(prog)s split -ir initial_root_dir -dr dataset_root_dir -s 0.4 0.3 0.3\n"
+                "         $python %(prog)s split -ir initial_root_dir -dr dataset_root_dir -s 0.8 0.15 0.05\n"
                 "\n"
                 "       Print the summary of the network model and save the model to disk:\n"
                 "         $python %(prog)s summary -m deeplabv3plus\n"
@@ -625,12 +627,12 @@ def main():
     parser.add_argument("-i", "--input_image", required=False, help="The input file to be segmented.")
     parser.add_argument("-o", "--output_file", required=False, help="The output file with the segmented image.")
     parser.add_argument("-s", "--split_percentage", nargs=3, metavar=('train_p', 'validation_p', 'test_p' ),
-                        type=float, default=[0.7, 0.2, 0.1],
+                        type=float, default=[0.8, 0.15, 0.05],
                         help="The percentage of images to be copied respectively to train/validation/test set.")
     parser.add_argument("-e", "--epochs", required=False, default=EPOCHS, type=int, help="The number of times that the entire dataset is passed forward and backward through the network during the training")
     parser.add_argument("-b", "--batch_size", required=False, default=BATCH_SIZE, type=int, help="the number of samples that are passed to the network at once during the training")
     parser.add_argument('-m', "--model", required=False,
-                        choices=(MODEL_UNET, MODEL_UNET2, MODEL_UNET3, MODEL_DEEPLABV3PLUS, MODEL_DEEPLABV3PLUS_XCEPTION, MODEL_DEEPLABV3PLUS_MOBILENETV2), 
+                        choices=(MODEL_UNET, MODEL_UNET2, MODEL_UNET3, MODEL_UNET_US, MODEL_DEEPLABV3PLUS, MODEL_DEEPLABV3PLUS_XCEPTION, MODEL_DEEPLABV3PLUS_MOBILENETV2), 
                         help="The model of network to be created/used. It must be compatible with the weigths file.")
     parser.add_argument("-l", "--logs_dir", required=False, default=DEFAULT_LOGS_DIR, 
                         help="The directory where training information will be added. If it doesn't exist it will be created.")
@@ -678,6 +680,8 @@ def main():
         model = create_model_UNet2(output_channels=N_CHANNELS, input_size=IMG_SIZE, classes=classes_for_pixel, transfer_learning=transfer_learning)
     elif network_model == MODEL_UNET3:
         model = create_model_UNet3(input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel, transfer_learning=transfer_learning)
+    elif network_model == MODEL_UNET_US:
+        model = create_model_UNet_US(input_size=(IMG_SIZE, IMG_SIZE, N_CHANNELS), n_classes=classes_for_pixel, transfer_learning=transfer_learning)
     elif network_model == MODEL_DEEPLABV3PLUS_XCEPTION or network_model == MODEL_DEEPLABV3PLUS:
         if transfer_learning == TRANSF_LEARN_PASCAL_VOC:
             model = create_model_deeplabv3plus(weights='pascal_voc', backbone='xception', input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel)
@@ -696,7 +700,7 @@ def main():
         # BUG
         raise ValueError('BUG: Model of network not supported.')
     # optimizer=tfa.optimizers.RectifiedAdam(lr=1e-3)
-    optimizer = Adam(learning_rate=learn_rate)
+    optimizer = tf.keras.optimizers.Adam(learning_rate=learn_rate)
     loss = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
     metrics = ['sparse_categorical_accuracy', dice_coef]
     model.compile(optimizer=optimizer, loss=loss, metrics=metrics)
@@ -779,8 +783,14 @@ def main():
         # Visualize the content of our dataloaders to make sure everything is fine.
         if check or save_some_predictions:
             print("Displaying content of dataset to make sure everything is fine...")
-            for image, mask in dataset['train'].take(1):
+            for image, mask in dataset['train'].take(3):
                 sample_image, sample_mask = image, mask
+                nvalues = 0
+                for i in range(256):
+                    n = np.sum(sample_mask[0] == i)
+                    nvalues += n
+                    print("Number of {} in mask={}".format(i, n))
+                print("Number of values found: " + str(nvalues))
                 plot_samples_matplotlib([sample_image[0], sample_mask[0]],
                                         ["Sample image", "Ground truth"])
         
@@ -827,7 +837,7 @@ def main():
         # Save some predictions at the end of the training
         print("Saving some predictions to file...")
         fn_pred = "pred_" + fn + "_" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + ".png"
-        show_predictions(dataset['train'], 3, fname = fn_pred)
+        show_predictions(dataset['train'], 4, fname = fn_pred)
         # Save all network structure (model, weights, optimizer, ...)
         fn_model = "model_" + fn + "_" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
         print("Saving network model and weights to file..." + fn_model)
@@ -969,23 +979,33 @@ def main():
         print("Copying images and trimaps of training set...")
         img_dir = os.path.join(dataset_root_dir, DATASET_IMG_SUBDIR, DATASET_TRAIN_SUBDIR)
         annot_dir = os.path.join(dataset_root_dir, DATASET_ANNOT_SUBDIR, DATASET_TRAIN_SUBDIR)
+        n = 0
         for i in range(ntrain):
             j = indexes[i]
             shutil.copy2(filenames[j], img_dir)
             fn, _ = os.path.splitext(os.path.basename(filenames[j]))
             fn = os.path.join(initial_annotations_dir, fn + PNG_EXT)
             shutil.copy2(fn, annot_dir)
+            if n % 50 == 0:
+                print (".", end = "", flush=True)
+            n += 1
+        print("\n")
 
         # VALIDATION DATASET
         print("Copying images and trimaps of validation set...")
         img_dir = os.path.join(dataset_root_dir, DATASET_IMG_SUBDIR, DATASET_VAL_SUBDIR)
         annot_dir = os.path.join(dataset_root_dir, DATASET_ANNOT_SUBDIR, DATASET_VAL_SUBDIR)
+        n = 0
         for i in range(nvalid):
             j = indexes[ntrain + i]
             shutil.copy2(filenames[j], img_dir)
             fn, _ = os.path.splitext(os.path.basename(filenames[j]))
             fn = os.path.join(initial_annotations_dir, fn + PNG_EXT)
             shutil.copy2(fn, annot_dir)
+            if n % 50 == 0:
+                print (".", end = "", flush=True)
+            n += 1
+        print("\n")
 
         # TEST DATASET
         print("Copying images and trimaps of test set...")
@@ -997,6 +1017,10 @@ def main():
             fn, _ = os.path.splitext(os.path.basename(filenames[j]))
             fn = os.path.join(initial_annotations_dir, fn + PNG_EXT)
             shutil.copy2(fn, annot_dir)
+            if n % 50 == 0:
+                print (".", end = "", flush=True)
+            n += 1
+        print("\n")
 
     elif args.action == ACTION_EVALUATE:
         # TODO replace with a call to do_evaluate()

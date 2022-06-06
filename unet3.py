@@ -62,7 +62,7 @@ def create_model_UNet3(input_shape=(128, 128, 3), classes=3, transfer_learning=N
 
     outputs = Conv2D(classes, 1, padding="same", activation="sigmoid")(d4)
 
-    model = Model(inputs, outputs, name="U-Net")
+    model = Model(inputs, outputs, name="U-Net3")
     return model
 
 if __name__ == "__main__":

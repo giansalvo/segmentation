@@ -83,4 +83,4 @@ def create_model_UNet2(output_channels:int, input_size=128, classes=3, transfer_
 
   x = last(x)
 
-  return tf.keras.Model(inputs=inputs, outputs=x)
+  return tf.keras.Model(inputs=inputs, outputs=x, name="U-Net2")
