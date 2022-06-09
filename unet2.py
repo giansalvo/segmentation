@@ -28,11 +28,12 @@ import tensorflow as tf
 from tensorflow_examples.models.pix2pix import pix2pix
 
 TRANSF_LEARN_IMAGENET_AND_FREEZE_DOWN = "imagenet_freeze_down"
+TRANSF_LEARN_LOAD_FILE = "load_file"
 
 def create_model_UNet2(output_channels:int, input_size=128, classes=3, transfer_learning=None):
   print("unet2.py: WARNING parameter 'classes' not used. Reserved for future uses.")   # TODO parameter classes not used
   if transfer_learning == TRANSF_LEARN_IMAGENET_AND_FREEZE_DOWN:
-    print("unet2.py: applying transfer learning: imagenet and freeze down stack.")
+    print("unet2.py: detected transfer learning: schedule imagenet weights to be loaded.")
     w = "imagenet"
   else:
     w = None
@@ -53,7 +54,8 @@ def create_model_UNet2(output_channels:int, input_size=128, classes=3, transfer_
   # Create the feature extraction model
   down_stack = tf.keras.Model(inputs=base_model.input, outputs=base_model_outputs)
 
-  if transfer_learning == TRANSF_LEARN_IMAGENET_AND_FREEZE_DOWN:
+  if transfer_learning == TRANSF_LEARN_IMAGENET_AND_FREEZE_DOWN or transfer_learning == TRANSF_LEARN_LOAD_FILE:
+    print("unet2.py: detected transfer learning: freeze down_stack weights.")
     down_stack.trainable = False
 
   up_stack = [

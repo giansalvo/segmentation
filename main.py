@@ -77,6 +77,7 @@ REGEXP_DEFAULT = "*.png"
 TRANSF_LEARN_IMAGENET_AND_FREEZE_DOWN = "imagenet_freeze_down"  # must match with unet2.py
 TRANSF_LEARN_PASCAL_VOC = "pascal_voc"
 TRANSF_LEARN_CITYSCAPES = "cityscapes"
+TRANSF_LEARN_LOAD_FILE = "load_file"
 
 # folders' structure
 DATASET_IMG_SUBDIR = "images"
@@ -462,16 +463,21 @@ def generate_colormap_image(input_fname):
 #     return overlay
 
 
+
 def plot_samples_matplotlib(display_list, labels_list=None, figsize=None, fname=None):
     NIMG_PER_COLS = 6
     if figsize is None:
         PX = 1/plt.rcParams['figure.dpi']  # pixel in inches
         figsize = (600*PX, 300*PX)
     ntot = len(display_list)
-    nrows = ntot // NIMG_PER_COLS + 1
-    if ntot < NIMG_PER_COLS:
+    if ntot <= NIMG_PER_COLS:
+        nrows = 1
         ncols = ntot
+    elif ntot % NIMG_PER_COLS == 0:
+        nrows = ntot // NIMG_PER_COLS
+        ncols = NIMG_PER_COLS
     else:
+        nrows = ntot // NIMG_PER_COLS + 1
         ncols = NIMG_PER_COLS
     _, axes = plt.subplots(nrows, ncols, figsize=figsize)
     for i_img in range(ntot):
@@ -643,7 +649,7 @@ def main():
     parser.add_argument("-lr", "--learning_rate", required=False, type=float, default=learn_rate, 
                         help="The learning rate of the optimizer funtion during the training.")
     parser.add_argument('-tl', "--transfer_learning", required=False, default=None, 
-                        choices=(TRANSF_LEARN_IMAGENET_AND_FREEZE_DOWN, TRANSF_LEARN_PASCAL_VOC, TRANSF_LEARN_CITYSCAPES), 
+                        choices=(TRANSF_LEARN_IMAGENET_AND_FREEZE_DOWN, TRANSF_LEARN_PASCAL_VOC, TRANSF_LEARN_CITYSCAPES, TRANSF_LEARN_LOAD_FILE), 
                         help="The transfer learning option. Not all network models support all options.")
     parser.add_argument('-c', "--classes", required=False, default=N_CLASSES, type=int,
                         help="The number of possible classes that each pixel can belong to.")
@@ -699,6 +705,19 @@ def main():
     else:
         # BUG
         raise ValueError('BUG: Model of network not supported.')
+
+    if transfer_learning == TRANSF_LEARN_LOAD_FILE:
+        print("Transfer learning from local file detected.")
+        if network_structure_path is not None:
+            print("Loading network model from " + network_structure_path)
+            model = tf.keras.models.load_model(network_structure_path, custom_objects={'dice_coef': dice_coef})
+        elif weights_fname is not None:
+            print("Loading network weights from file " + weights_fname)
+            model.load_weights(weights_fname)
+        else:
+            print("ERROR: network_structure_path or weights_fname argument must be provided.")
+            exit(1)
+
     # optimizer=tfa.optimizers.RectifiedAdam(lr=1e-3)
     optimizer = tf.keras.optimizers.Adam(learning_rate=learn_rate)
     loss = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
