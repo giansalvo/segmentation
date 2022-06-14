@@ -304,23 +304,22 @@ def dice_target_class(Y_true, Y_pred, epsilon=1e-5):
         y_pred = tf.cast(y_pred, tf.uint8)
         target = TARGET_CLASS - 1   # normalize target class number as we did in load_image
         
-        # compute intermediate tensors
+        # compute intermediate tensor for ground truth
         y_true = tf.squeeze(y_true)
         y_true_bool = tf.equal(y_true, target)    # get boolean values
         y_true_target = tf.cast(y_true_bool, tf.uint32)        # convert to 0/1
 
+        # compute intermediate tensor for prediction
         y_pred = tf.squeeze(y_pred)
         y_pred_bool = tf.equal(y_pred, target)    # get boolean values
         y_pred_target = tf.cast(y_pred_bool, tf.uint32)        # convert to 0/1
 
-        # the following double loop should be replaced by the following two instructions, but I couldn't make it work!
-        # ALTERNATIVE 1
+        # compute intersection, union and finally dice value
         intersection = tf.reduce_sum(y_true_target * y_pred_target)
         intersection = tf.keras.backend.eval(intersection)
         card_pred = tf.keras.backend.eval(tf.reduce_sum(y_pred_target))
         card_true = tf.keras.backend.eval(tf.reduce_sum(y_true_target))
         union = card_pred + card_true
-
         dice = (2. * intersection + epsilon) / (union + epsilon)
         # if dice > 1.:
         #     tf.print("BUG: calculated Dice is higher than 1.")
@@ -734,9 +733,7 @@ def main():
     #group = parser.add_mutually_exclusive_group()
     #group.add_argument("-v", "--verbose", action="store_true")
     #group.add_argument("-q", "--quiet", action="store_true")
-    parser.add_argument("action", help="The action to perform: " +
-                       ACTION_SPLIT+", "+ACTION_TRAIN+", "+ACTION_PREDICT+", "+ACTION_SUMMARY+", "+ACTION_EVALUATE,
-                        choices=(ACTION_SPLIT, ACTION_TRAIN, ACTION_PREDICT, ACTION_SUMMARY, ACTION_EVALUATE, ACTION_INSPECT))
+    parser.add_argument("action", help="The action to be performed.")
     parser.add_argument('--check', dest='check', default=False, action='store_true',
                         help="Display some images from dataset before training to check that dataset is ok.")
     parser.add_argument('--save_predictions', dest='save_some_predictions', default=False, action='store_true',
@@ -784,7 +781,9 @@ def main():
     learn_rate = args.learning_rate
     transfer_learning = args.transfer_learning
     classes_for_pixel = args.classes
+    action = args.action
 
+    logger.debug("action=" + str(action))
     logger.debug("dataset_root_dir=" + str(dataset_root_dir))
     logger.debug("weights_fname=" + str(weights_fname))
     logger.debug("network_model=" + str(network_model))
@@ -795,33 +794,34 @@ def main():
     logger.debug("classes_for_pixel=" + str(classes_for_pixel))
 
     # create the unet network architecture with keras
-    if network_model == MODEL_DUMMY:
-        model = create_model_dummy(input_size=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel, transfer_learning=transfer_learning)
-    elif network_model == MODEL_UNET:
-        model = create_model_UNet(input_size=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel, transfer_learning=transfer_learning)
-    elif network_model == MODEL_UNET2:
-        model = create_model_UNet2(output_channels=N_CHANNELS, input_size=IMG_SIZE, classes=classes_for_pixel, transfer_learning=transfer_learning)
-    elif network_model == MODEL_UNET3:
-        model = create_model_UNet3(input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel, transfer_learning=transfer_learning)
-    elif network_model == MODEL_UNET_US:
-        model = create_model_UNet_US(input_size=(IMG_SIZE, IMG_SIZE, N_CHANNELS), n_classes=classes_for_pixel, transfer_learning=transfer_learning)
-    elif network_model == MODEL_DEEPLABV3PLUS_XCEPTION or network_model == MODEL_DEEPLABV3PLUS:
-        if transfer_learning == TRANSF_LEARN_PASCAL_VOC:
-            model = create_model_deeplabv3plus(weights='pascal_voc', backbone='xception', input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel)
-        elif transfer_learning is TRANSF_LEARN_CITYSCAPES:
-            model = create_model_deeplabv3plus(weights='cityscapes', backbone='xception', input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel)
+    if action == ACTION_TRAIN or action == ACTION_PREDICT or action == ACTION_EVALUATE or action == ACTION_SUMMARY:
+        if network_model == MODEL_DUMMY:
+            model = create_model_dummy(input_size=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel, transfer_learning=transfer_learning)
+        elif network_model == MODEL_UNET:
+            model = create_model_UNet(input_size=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel, transfer_learning=transfer_learning)
+        elif network_model == MODEL_UNET2:
+            model = create_model_UNet2(output_channels=N_CHANNELS, input_size=IMG_SIZE, classes=classes_for_pixel, transfer_learning=transfer_learning)
+        elif network_model == MODEL_UNET3:
+            model = create_model_UNet3(input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel, transfer_learning=transfer_learning)
+        elif network_model == MODEL_UNET_US:
+            model = create_model_UNet_US(input_size=(IMG_SIZE, IMG_SIZE, N_CHANNELS), n_classes=classes_for_pixel, transfer_learning=transfer_learning)
+        elif network_model == MODEL_DEEPLABV3PLUS_XCEPTION or network_model == MODEL_DEEPLABV3PLUS:
+            if transfer_learning == TRANSF_LEARN_PASCAL_VOC:
+                model = create_model_deeplabv3plus(weights='pascal_voc', backbone='xception', input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel)
+            elif transfer_learning is TRANSF_LEARN_CITYSCAPES:
+                model = create_model_deeplabv3plus(weights='cityscapes', backbone='xception', input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel)
+            else:
+                model = create_model_deeplabv3plus(weights=None, backbone='xception', input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel)
+        elif network_model == MODEL_DEEPLABV3PLUS_MOBILENETV2:
+            if transfer_learning == TRANSF_LEARN_PASCAL_VOC:
+                model = create_model_deeplabv3plus(weights='pascal_voc', backbone='mobilenetv2', input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel)
+            elif transfer_learning == TRANSF_LEARN_CITYSCAPES:
+                model = create_model_deeplabv3plus(weights='cityscapes', backbone='mobilenetv2', input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel)
+            else:
+                model = create_model_deeplabv3plus(weights=None, backbone='mobilenetv2', input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel)
         else:
-            model = create_model_deeplabv3plus(weights=None, backbone='xception', input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel)
-    elif network_model == MODEL_DEEPLABV3PLUS_MOBILENETV2:
-        if transfer_learning == TRANSF_LEARN_PASCAL_VOC:
-            model = create_model_deeplabv3plus(weights='pascal_voc', backbone='mobilenetv2', input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel)
-        elif transfer_learning == TRANSF_LEARN_CITYSCAPES:
-            model = create_model_deeplabv3plus(weights='cityscapes', backbone='mobilenetv2', input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel)
-        else:
-            model = create_model_deeplabv3plus(weights=None, backbone='mobilenetv2', input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel)
-    else:
-        # BUG
-        raise ValueError('BUG: Model of network not supported.')
+            # BUG
+            raise ValueError('BUG: Model of network not supported.')
 
     if transfer_learning == TRANSF_LEARN_LOAD_FILE:
         print("Transfer learning from local file detected.")
