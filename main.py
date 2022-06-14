@@ -49,6 +49,8 @@ from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.preprocessing import image
 from tensorflow.keras import backend as K
 from tensorflow.keras.backend import manual_variable_initialization
+from tensorflow.keras.layers import *   # used here for creating dummy network model
+import tensorflow_addons as tfa
 from PIL import Image
 
 from deeplab_v3_plus import create_model_deeplabv3plus
@@ -66,6 +68,7 @@ ACTION_EVALUATE = "evaluate"
 ACTION_INSPECT = "inspect"
 PNG_EXT = ".png"
 FEXT_JPEG = "*.jpg"
+MODEL_DUMMY = "dummy"
 MODEL_UNET = "unet"
 MODEL_UNET2 = "unet2"
 MODEL_UNET3 = "unet3"
@@ -74,7 +77,7 @@ MODEL_DEEPLABV3PLUS = "deeplabv3plus"   # DEPRECATED
 MODEL_DEEPLABV3PLUS_XCEPTION = "deeplabv3plus_xception"
 MODEL_DEEPLABV3PLUS_MOBILENETV2 = "deeplabv3plus_mobilenetv2"
 REGEXP_DEFAULT = "*.png"
-TRANSF_LEARN_IMAGENET_AND_FREEZE_DOWN = "imagenet_freeze_down"  # must match with unet2.py
+TRANSF_LEARN_IMAGENET_AND_FREEZE_DOWN = "imagenet_freeze_down"  # must match with the definition in unet2.py
 TRANSF_LEARN_PASCAL_VOC = "pascal_voc"
 TRANSF_LEARN_CITYSCAPES = "cityscapes"
 TRANSF_LEARN_LOAD_FILE = "load_file"
@@ -96,6 +99,7 @@ SEED = 42       # this allows to generate the same random numbers
 IMG_SIZE = 128  # Image size that we are going to use
 N_CHANNELS = 3  # Our images are RGB (3 channels)
 N_CLASSES = 3   # Scene Parsing has 150 classes + `not labeled` (151)
+TARGET_CLASS = 1    # class of foreground, it will be used to compute dice coeff.
 BATCH_SIZE = 64
 dataset_root_dir = ""
 check = False
@@ -220,27 +224,133 @@ def load_image(datapoint: dict) -> tuple:
     return input_image, input_mask
 
 
-# Dice coeff (F1 score)
-# https://gist.github.com/wassname/7793e2058c5c9dacb5212c0ac0b18a8a
-def dice_coef(y_true, y_pred, epsilon=1e-6):
-    """
+def create_model_dummy(input_size=(128, 128, 3), classes=150, transfer_learning=None):
+    inputs = Input(shape=input_size)
+    output = Conv2D(classes, 1, activation='softmax')(inputs)
+    model = tf.keras.Model(inputs=inputs, outputs=output, name="dummy_net")
+    return model
+
+
+# this metric should perform like keras metric sparse_categorical_accuracy,
+# but from the experiments there is a little difference
+def multiclass_accuracy(Y_true, Y_pred):
+    # tf.print("Y_true.shape="+str(Y_true.shape))
+    nbatch_size = Y_true.shape[0]
+    if nbatch_size is None:
+        return float('nan')
+    accuracy_batch = 0
+    for i in range(nbatch_size):
+        # extract i-th images (sample and mask) from batch and normalize them
+        y_true = Y_true[i]
+        y_pred = Y_pred[i]
+        y_pred = tf.argmax(y_pred, -1)
+        y_pred = tf.cast(y_pred, tf.uint32)
+        y_true = tf.cast(y_true, tf.uint32)
+        y_true = tf.squeeze(y_true)
+
+        # compute intersection matrix
+        y_bool = tf.equal(y_true, y_pred)    # get boolean values
+        y = tf.cast(y_bool, tf.uint32)        # convert to 0/1
+
+        # the following double loop should be replaced by the followin one line instruction, but I couldn't make i work!
+        sum = tf.keras.backend.eval(tf.reduce_sum(y))  # sum all elemnents and convert to scalar
+        # s = 0
+        # for r in range(IMG_SIZE):
+        #     for c in range(IMG_SIZE):
+        #         #tf.print(y[r,c], output_stream=sys.stderr, sep=',', end='')
+        #         s += tf.keras.backend.eval(y[r,c])
+        #tf.print("\n", output_stream=sys.stderr)
+
+        # compute accuracy
+        size = tf.keras.backend.eval(tf.size(y))      # get number of pixel and convert to scalar
+        accuracy = sum / size
+        assert accuracy <= 1.
+        assert accuracy >= 0.
+        #tf.print("\nsize="+str(size)+" sum="+ str(sum)+" s="+ str(s)+" accuracy="+str(accuracy))
+        # increment accuracy for the batch
+        accuracy_batch += accuracy
+    # compute the average accuracy for the whole batch
+    accuracy_batch = accuracy_batch / nbatch_size
+    return accuracy_batch
+
+
+"""
+    Dice Similarity Coeff. (DSC or F1 score) computed only on the foreground (target) class
     Dice = (2*|X & Y|)/ (|X| + |Y|)
-         =  2*sum(|A*B|) / (sum(A^2) + sum(B^2))
-    ref: https://arxiv.org/pdf/1606.04797v1.pdf
-    """
-    intersection = K.sum(K.abs(y_true * y_pred), axis=-1)
-    sum = K.sum(K.square(y_true),axis=-1) + K.sum(K.square(y_pred),axis=-1)
-    coeff = (2. * intersection + epsilon) / (sum + epsilon)
-    return 1 - coeff
 
+    implementation inspired by
+    https://gist.github.com/wassname/7793e2058c5c9dacb5212c0ac0b18a8a
+    https://gist.github.com/wassname/7793e2058c5c9dacb5212c0ac0b18a8a
 
+    This function needs to run in eager mode:
+    - tf.config.run_functions_eagerly(True)
+    - compile with run_eagerly=True
+    - do not use @tf.function decorator
+"""
+def dice_target_class(Y_true, Y_pred, epsilon=1e-5):
+    # tf.print("Y_true.shape="+str(Y_true.shape))
+    nbatch_size = Y_true.shape[0]
+    # tf.print(str(type(nbatch_size)))
+    if nbatch_size is None:
+        return float('nan')
+    dice_batch = 0
+    for i in range(nbatch_size):
+        # extract i-th images (sample and mask) from batch and normalize them
+        y_true = Y_true[i]
+        y_pred = Y_pred[i]
+        y_pred = tf.argmax(y_pred, -1)
+        y_pred = tf.cast(y_pred, tf.uint8)
+        target = TARGET_CLASS - 1   # normalize target class number as we did in load_image
+        
+        # compute intermediate tensors
+        y_true = tf.squeeze(y_true)
+        y_true_bool = tf.equal(y_true, target)    # get boolean values
+        y_true_target = tf.cast(y_true_bool, tf.uint32)        # convert to 0/1
 
-# # Compute IoU coefficient (Jaccard index)
-# def iou_coef(y_true, y_pred, smooth=1e-7):
-#   intersection = K.sum(K.abs(y_true * y_pred), axis=[1,2,3])
-#   union = K.sum(y_true,[1,2,3])+K.sum(y_pred,[1,2,3])-intersection
-#   iou = K.mean((intersection + smooth) / (union + smooth), axis=0)
-#   return iou
+        y_pred = tf.squeeze(y_pred)
+        y_pred_bool = tf.equal(y_pred, target)    # get boolean values
+        y_pred_target = tf.cast(y_pred_bool, tf.uint32)        # convert to 0/1
+
+        # the following double loop should be replaced by the following two instructions, but I couldn't make it work!
+        # ALTERNATIVE 1
+        intersection = tf.reduce_sum(y_true_target * y_pred_target)
+        intersection = tf.keras.backend.eval(intersection)
+        card_pred = tf.keras.backend.eval(tf.reduce_sum(y_pred_target))
+        card_true = tf.keras.backend.eval(tf.reduce_sum(y_true_target))
+        union = card_pred + card_true
+
+        dice = (2. * intersection + epsilon) / (union + epsilon)
+        # if dice > 1.:
+        #     tf.print("BUG: calculated Dice is higher than 1.")
+        #     tf.print("dice="+str(dice))
+        #     tf.print("y_true_target.shape="+str(y_true_target.shape))
+        #     tf.print("y_pred_target.shape="+str(y_pred_target.shape))
+        #     tf.print("card_pred="+str(card_pred))
+        #     tf.print("card_true="+str(card_true))
+        #     tf.print("intersection="+str(intersection),output_stream=sys.stderr)
+        #     tf.print("union="+str(union),output_stream=sys.stderr)
+        #     tf.print("y_true_target",output_stream=sys.stderr)
+        #     for r in range(IMG_SIZE):
+        #         for c in range(IMG_SIZE):
+        #             tf.print(y_true_target[c,r], output_stream=sys.stderr, sep=',', end=' ')
+        #         tf.print("\n",output_stream=sys.stderr, end='')
+        #     tf.print("y_pred_target",output_stream=sys.stderr)
+        #     s=0
+        #     for r in range(IMG_SIZE):
+        #         for c in range(IMG_SIZE):
+        #             s += y_pred_target[r,c].numpy()
+        #             tf.print(y_pred_target[c,r], output_stream=sys.stderr, sep=',', end=' ')
+        #         tf.print("\n",output_stream=sys.stderr, end='')
+        #     tf.print("card_pred="+str(s))
+        assert dice <= 1.
+        assert dice >= 0.
+
+        # increment accuracy for the batch
+        dice_batch += dice
+    # compute the average accuracy for the whole batch
+    dice_batch = dice_batch / nbatch_size
+    return dice_batch
+
 
 # Generalized dice loss for multi-class 3D segmentation
 # # https://github.com/keras-team/keras/issues/9395
@@ -566,9 +676,12 @@ def main():
     global transfer_learning
     global logger
 
-    manual_variable_initialization(True)    # avoid that Tf/keras automatic initializazion
+    # manual_variable_initialization(True)    # avoid that Tf/keras automatic initializazion
     seed(SEED)                              # initialize numpy random generator
     tf.random.set_seed(SEED)                # initialize Tensorflow random generator
+
+    # DON'T TOUCHE THIS! thie code must run in eagerly mode otherwise custom metrics (i.e. multiclass_accuracy and otherrs) won't work!!
+    tf.config.run_functions_eagerly(True)
 
     # create logger
     logger = logging.getLogger('gians')
@@ -638,7 +751,7 @@ def main():
     parser.add_argument("-e", "--epochs", required=False, default=EPOCHS, type=int, help="The number of times that the entire dataset is passed forward and backward through the network during the training")
     parser.add_argument("-b", "--batch_size", required=False, default=BATCH_SIZE, type=int, help="the number of samples that are passed to the network at once during the training")
     parser.add_argument('-m', "--model", required=False,
-                        choices=(MODEL_UNET, MODEL_UNET2, MODEL_UNET3, MODEL_UNET_US, MODEL_DEEPLABV3PLUS, MODEL_DEEPLABV3PLUS_XCEPTION, MODEL_DEEPLABV3PLUS_MOBILENETV2), 
+                        choices=(MODEL_DUMMY, MODEL_UNET, MODEL_UNET2, MODEL_UNET3, MODEL_UNET_US, MODEL_DEEPLABV3PLUS, MODEL_DEEPLABV3PLUS_XCEPTION, MODEL_DEEPLABV3PLUS_MOBILENETV2), 
                         help="The model of network to be created/used. It must be compatible with the weigths file.")
     parser.add_argument("-l", "--logs_dir", required=False, default=DEFAULT_LOGS_DIR, 
                         help="The directory where training information will be added. If it doesn't exist it will be created.")
@@ -680,7 +793,9 @@ def main():
     logger.debug("classes_for_pixel=" + str(classes_for_pixel))
 
     # create the unet network architecture with keras
-    if network_model == MODEL_UNET:
+    if network_model == MODEL_DUMMY:
+        model = create_model_dummy(input_size=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel, transfer_learning=transfer_learning)
+    elif network_model == MODEL_UNET:
         model = create_model_UNet(input_size=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel, transfer_learning=transfer_learning)
     elif network_model == MODEL_UNET2:
         model = create_model_UNet2(output_channels=N_CHANNELS, input_size=IMG_SIZE, classes=classes_for_pixel, transfer_learning=transfer_learning)
@@ -721,8 +836,12 @@ def main():
     # optimizer=tfa.optimizers.RectifiedAdam(lr=1e-3)
     optimizer = tf.keras.optimizers.Adam(learning_rate=learn_rate)
     loss = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
-    metrics = ['sparse_categorical_accuracy', dice_coef]
-    model.compile(optimizer=optimizer, loss=loss, metrics=metrics)
+    # IoU = tf.keras.metrics.IoU(num_classes=2, target_class_ids=[0], name ='IoU')
+    # meanIoU = tf.keras.metrics.MeanIoU(num_classes=2)
+    # F1Score = tfa.metrics.F1Score(num_classes=3, threshold=0.5)
+    metrics = ['sparse_categorical_accuracy', multiclass_accuracy]
+    print("Compiling the network model...")
+    model.compile(optimizer=optimizer, loss=loss, metrics=metrics, run_eagerly=True) 
     
     if args.action == ACTION_TRAIN:
         if weights_fname is None:
@@ -885,7 +1004,7 @@ def main():
 
         if network_structure_path is not None:
             print("Loading network model from " + network_structure_path)
-            model = tf.keras.models.load_model(network_structure_path, custom_objects={'dice_coef': dice_coef})
+            model = tf.keras.models.load_model(network_structure_path, custom_objects={'dice_coef': multiclass_accuracy})
         elif weights_fname is not None:
             print("Loading network weights from file " + weights_fname)
             model.load_weights(weights_fname)
