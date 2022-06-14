@@ -189,8 +189,10 @@ class Augment(tf.keras.layers.Layer):
     super().__init__()
     # both use the same seed, so they'll make the same random changes.
     self.augment_inputs = tf.keras.layers.RandomFlip(mode="horizontal", seed=seed)
+    self.augment_inputs = tf.keras.layers.RandomRotation(0.2, seed=seed)
     self.augment_labels = tf.keras.layers.RandomFlip(mode="horizontal", seed=seed)
-  
+    self.augment_labels = tf.keras.layers.RandomRotation(0.2, seed=seed)
+
   def call(self, inputs, labels):
     inputs = self.augment_inputs(inputs)
     labels = self.augment_labels(labels)
@@ -839,7 +841,7 @@ def main():
     # IoU = tf.keras.metrics.IoU(num_classes=2, target_class_ids=[0], name ='IoU')
     # meanIoU = tf.keras.metrics.MeanIoU(num_classes=2)
     # F1Score = tfa.metrics.F1Score(num_classes=3, threshold=0.5)
-    metrics = ['sparse_categorical_accuracy', multiclass_accuracy]
+    metrics = ['sparse_categorical_accuracy', dice_target_class]
     print("Compiling the network model...")
     model.compile(optimizer=optimizer, loss=loss, metrics=metrics, run_eagerly=True) 
     
