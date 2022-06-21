@@ -961,27 +961,27 @@ def main():
             # BUG
             raise ValueError('BUG: Model of network not supported.')
 
-    if transfer_learning == TRANSF_LEARN_LOAD_FILE:
-        print("Transfer learning from local file detected.")
-        if network_structure_path is not None:
-            print("Loading network model from " + network_structure_path)
-            model = tf.keras.models.load_model(network_structure_path, custom_objects={'dice_coef': dice_coef})
-        elif weights_fname is not None:
-            print("Loading network weights from file " + weights_fname)
-            model.load_weights(weights_fname)
-        else:
-            print("ERROR: network_structure_path or weights_fname argument must be provided.")
-            exit(1)
+        if transfer_learning == TRANSF_LEARN_LOAD_FILE:
+            print("Transfer learning from local file detected.")
+            if network_structure_path is not None:
+                print("Loading network model from " + network_structure_path)
+                model = tf.keras.models.load_model(network_structure_path, custom_objects={'dice_coef': dice_coef})
+            elif weights_fname is not None:
+                print("Loading network weights from file " + weights_fname)
+                model.load_weights(weights_fname)
+            else:
+                print("ERROR: network_structure_path or weights_fname argument must be provided.")
+                exit(1)
 
-    # optimizer=tfa.optimizers.RectifiedAdam(lr=1e-3)
-    optimizer = tf.keras.optimizers.Adam(learning_rate=learn_rate)
-    loss = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
-    # IoU = tf.keras.metrics.IoU(num_classes=2, target_class_ids=[0], name ='IoU')
-    # meanIoU = tf.keras.metrics.MeanIoU(num_classes=2)
-    # F1Score = tfa.metrics.F1Score(num_classes=3, threshold=0.5)
-    metrics = ['sparse_categorical_accuracy', dice_target_class]
-    print("Compiling the network model...")
-    model.compile(optimizer=optimizer, loss=loss, metrics=metrics, run_eagerly=True) 
+        # optimizer=tfa.optimizers.RectifiedAdam(lr=1e-3)
+        optimizer = tf.keras.optimizers.Adam(learning_rate=learn_rate)
+        loss = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
+        # IoU = tf.keras.metrics.IoU(num_classes=2, target_class_ids=[0], name ='IoU')
+        # meanIoU = tf.keras.metrics.MeanIoU(num_classes=2)
+        # F1Score = tfa.metrics.F1Score(num_classes=3, threshold=0.5)
+        metrics = ['sparse_categorical_accuracy', dice_target_class]
+        print("Compiling the network model...")
+        model.compile(optimizer=optimizer, loss=loss, metrics=metrics, run_eagerly=True) 
     
     if args.action == ACTION_TRAIN:
         if weights_fname is None:
