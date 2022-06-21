@@ -1047,7 +1047,7 @@ def main():
 
             # Evaluate model on test set (best weights have been loaded in train_network fucntion!)
             print("Evaluating model on test set...")
-            do_evaluate(dataset_root_dir=dataset_root_dir, batch_size=batch_size, perf_file=fn_pred)
+            do_evaluate(dataset_root_dir=dataset_root_dir, batch_size=batch_size, perf_file=fn_perf)
 
     elif args.action == ACTION_PREDICT:
         if args.input_image is None:
