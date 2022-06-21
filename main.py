@@ -53,6 +53,8 @@ from tensorflow.keras.layers import *   # used here for creating dummy network m
 import tensorflow_addons as tfa
 from PIL import Image
 
+from sklearn.model_selection import KFold
+
 from deeplab_v3_plus import create_model_deeplabv3plus
 from unet import create_model_UNet
 from unet2 import create_model_UNet2
@@ -187,15 +189,24 @@ def normalize(input_image: tf.Tensor, input_mask: tf.Tensor) -> tuple:
 class Augment(tf.keras.layers.Layer):
   def __init__(self, seed=SEED):
     super().__init__()
-    # both use the same seed, so they'll make the same random changes.
-    self.augment_inputs = tf.keras.layers.RandomFlip(mode="horizontal", seed=seed)
-    self.augment_inputs = tf.keras.layers.RandomRotation(0.2, seed=seed)
-    self.augment_labels = tf.keras.layers.RandomFlip(mode="horizontal", seed=seed)
-    self.augment_labels = tf.keras.layers.RandomRotation(0.2, seed=seed)
+    # self.augment_inputs = tf.keras.layers.RandomFlip(mode="horizontal")
+    # self.augment_inputs = tf.keras.layers.RandomRotation(0.25)
+    # self.augment_inputs = tf.keras.layers.RandomZoom(0.25)
+    # # masks
+    # self.augment_labels = tf.keras.layers.RandomFlip(mode="horizontal")
+    # self.augment_labels = tf.keras.layers.RandomRotation(0.25)
+    # self.augment_inputs = tf.keras.layers.RandomZoom(0.25)
 
   def call(self, inputs, labels):
-    inputs = self.augment_inputs(inputs)
-    labels = self.augment_labels(labels)
+    if tf.random.uniform(()) > 0.5:
+        inputs = tf.keras.layers.RandomFlip(mode="horizontal")(inputs)
+        labels = tf.keras.layers.RandomFlip(mode="horizontal")(labels)
+    if tf.random.uniform(()) > 0.5:
+        inputs = tf.keras.layers.RandomRotation(0.25)(inputs)
+        labels = tf.keras.layers.RandomRotation(0.25)(labels)
+    if tf.random.uniform(()) > 0.5:
+        inputs = tf.keras.layers.RandomZoom(0.25)(inputs)
+        labels = tf.keras.layers.RandomZoom(0.25)(labels)
     return inputs, labels
 
 
@@ -433,8 +444,8 @@ def show_predictions(dataset=None, num=1, fname=None):
     """
     if dataset:
         if fname:
-                fn, fext = os.path.splitext(os.path.basename(fname))
-                i = 0
+            fn, fext = os.path.splitext(os.path.basename(fname))
+            i = 0
         for image, true_mask in dataset.take(num):
             if fname:
                 fname = "{}_{:03d}.png".format(fn, i)
@@ -495,10 +506,9 @@ class DisplayCallback(tf.keras.callbacks.Callback):
             save_predictions(epoch=epoch)
 
 
-def train_network(network_model, images_dataset, epochs, steps_per_epoch, validation_steps):
+def fit_network(network_model, images_dataset, epochs, steps_per_epoch, validation_steps, log_dir, weights_fname):
 
-    logdir = os.path.join(logs_dir, datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
-    tensorboard_callback = tf.keras.callbacks.TensorBoard(logdir, histogram_freq=1)
+    tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir, histogram_freq=1)
     callbacks = [
         # to show samples after each epoch
         DisplayCallback(),
@@ -641,7 +651,7 @@ def do_evaluate(dataset_root_dir, batch_size, perf_file):
     steps_num = testset_size // batch_size
     logger.debug("steps_num=" + str(steps_num))
     if steps_num == 0:
-        print("ERROR: steps_num cannot be zero. Increase number of images or reduce batch_size.")
+        print("ERROR: steps_num cannot be zero. Increase number of test  images or reduce batch_size.")
         exit()
 
     test_dataset = tf.data.Dataset.list_files(test_files_regexp, seed=SEED)
@@ -653,13 +663,136 @@ def do_evaluate(dataset_root_dir, batch_size, perf_file):
     test_dataset = test_dataset.batch(batch_size)
     test_dataset = test_dataset.prefetch(buffer_size=tf.data.AUTOTUNE)
 
-    scores = model.evaluate(test_dataset,
+    results = model.evaluate(test_dataset,
                             steps = steps_num)
-    results = list(zip(model.metrics_names, scores))
+    # results = list(zip(model.metrics_names, scores))
     # Print results to file
     print("\nEvaluation on test set:", file=open(perf_file, 'a'))
-    print(str(dict(zip(model.metrics_names, scores))), file=open(perf_file, 'a'))
+    print(str(dict(zip(model.metrics_names, results))), file=open(perf_file, 'a'))
+    return results
                           
+
+def train_network(train_files, val_files, epochs, batch_size, weights_fname, timestamp, fn_pred):
+    global sample_image
+    global sample_mask
+
+    training_start = datetime.datetime.now().replace(microsecond=0)
+    # Creating a source dataset
+    trainset_size = len(train_files)
+    print(f"The Training Dataset contains {trainset_size} images.")
+    valset_size = len(val_files)
+    print(f"The Validation Dataset contains {valset_size} images.")
+
+    if trainset_size == 0 or valset_size == 0:
+        print("ERROR: Training dataset and validation datasets must be not empty!")
+        exit()
+
+    steps_per_epoch = trainset_size // batch_size
+    validation_steps = valset_size // batch_size
+
+    logger.debug("steps_per_epoch=" + str(steps_per_epoch))
+    logger.debug("validation_steps=" + str(validation_steps))
+    if steps_per_epoch == 0:
+        print("ERROR: Not enough images for the training process!")
+        exit()
+
+    train_dataset = tf.data.Dataset.from_tensor_slices(train_files)
+    train_dataset = train_dataset.map(parse_image)
+
+    val_dataset = tf.data.Dataset.from_tensor_slices(val_files)
+    val_dataset = val_dataset.map(parse_image)
+
+    dataset = {"train": train_dataset, "val": val_dataset}
+
+    # -- Train Dataset --#
+    dataset['train'] = dataset['train'].map(load_image, num_parallel_calls=tf.data.AUTOTUNE)
+    dataset['train'] = dataset['train'].cache()
+    # dataset['train'] = dataset['train'].shuffle(buffer_size=BUFFER_SIZE, seed=SEED)
+    dataset['train'] = dataset['train'].batch(batch_size)
+    dataset['train'] = dataset['train'].repeat()
+    dataset['train'] = dataset['train'].map(Augment())
+    dataset['train'] = dataset['train'].prefetch(buffer_size=tf.data.AUTOTUNE)
+
+    # -- Validation Dataset --#
+    dataset['val'] = dataset['val'].map(load_image)
+    dataset['val'] = dataset['val'].batch(batch_size)
+    dataset['val'] = dataset['val'].repeat()
+    dataset['val'] = dataset['val'].prefetch(buffer_size=tf.data.AUTOTUNE)
+
+    #logger.debug(dataset['train'])
+    #logger.debug(dataset['val'])
+    # how shuffle works: https://stackoverflow.com/a/53517848
+
+    # Visualize the content of our dataloaders to make sure everything is fine.
+    if check or save_some_predictions:
+        print("Displaying content of dataset to make sure everything is fine...")
+        for image, mask in dataset['train'].take(3):
+            sample_image, sample_mask = image, mask
+            nvalues = 0
+            for i in range(256):
+                n = np.sum(sample_mask[0] == i)
+                if n != 0:
+                    nvalues += n
+                    print("Number of {} in mask={}".format(i, n))
+            print("Number of values found: " + str(nvalues))
+            plot_samples_matplotlib([sample_image[0], sample_mask[0]],
+                                    ["Sample", "Ground truth"])
+    
+    logger.info("Start network training...")
+    fn, _ = os.path.splitext(os.path.basename(weights_fname))
+    logdir = os.path.join(logs_dir, "_" + timestamp)
+    
+    model_history = fit_network(model, dataset, epochs, steps_per_epoch, validation_steps, logdir, weights_fname)
+    training_end = datetime.datetime.now().replace(microsecond=0)
+    logger.info("Network training end.")
+        
+    # Save performances to file
+    fn_perf = "perf_" + fn + ".txt"
+    print("Saving performances to file..." + fn_perf)
+    # Save invocation command line
+    print("Invocation command: ", end="", file=open(fn_perf, 'a'))
+    narg = len(sys.argv)
+    for x in range(narg):
+        print(sys.argv[x], end = " ", file=open(fn_perf, 'a'))
+    print("\n", file=open(fn_perf, 'a'))
+    # Save performance information        
+    training_time = training_end - training_start
+    print("Training time: {}\n".format(training_time), file=open(fn_perf, 'a'))
+    for key in model_history.history.keys():
+        print("{}: {:.4f}".format(key,  model_history.history[key][-1]), file=open(fn_perf, 'a'))
+
+    # Plot loss functions
+    loss = model_history.history['loss']
+    val_loss = model_history.history['val_loss']
+    plt.figure()
+    plt.plot(model_history.epoch, loss, 'r', label='Training loss')
+    plt.plot(model_history.epoch, val_loss, 'bo', label='Validation loss')
+    plt.title('Training and Validation Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss Value')
+    #  plt.ylim([0, 1])
+    plt.legend()
+    fn_plot = "plot_" + fn + ".png"
+    print("Saving plot to file..." + fn_plot)
+    plt.savefig(fn_plot)
+    if check:
+        plt.show()
+    else:
+        plt.close()
+
+    # Reload best weights
+    model.load_weights(weights_fname)
+    # Save network structure (model, weights, optimizer, ...)
+    fn_model = "model_" + fn
+    print("Saving network model and weights to file..." + fn_model)
+    model.save(fn_model)
+
+    # Save some predictions at the end of the training
+    print("Saving some predictions to file...")
+    show_predictions(dataset['train'], 4, fname = fn_pred)
+
+    # tf.keras.backend.clear_session()
+    return model_history
 
 
 #########################
@@ -765,6 +898,9 @@ def main():
                         help="The transfer learning option. Not all network models support all options.")
     parser.add_argument('-c', "--classes", required=False, default=N_CLASSES, type=int,
                         help="The number of possible classes that each pixel can belong to.")
+    parser.add_argument('-k', "--kfold_num", required=False, default=0, type=int,
+                        help="Speficy the number of folds for the K-folds cross validation. If not specified the traditional"
+                        "folder split technique will be used.")
 
     args = parser.parse_args()
 
@@ -782,6 +918,7 @@ def main():
     transfer_learning = args.transfer_learning
     classes_for_pixel = args.classes
     action = args.action
+    kfold_num = args.kfold_num
 
     logger.debug("action=" + str(action))
     logger.debug("dataset_root_dir=" + str(dataset_root_dir))
@@ -792,8 +929,9 @@ def main():
     logger.debug("learn_rate=" + str(learn_rate))
     logger.debug("transfer_learning=" + str(transfer_learning))
     logger.debug("classes_for_pixel=" + str(classes_for_pixel))
+    logger.debug("kfold_num=" + str(kfold_num))
 
-    # create the unet network architecture with keras
+    # create the network architecture with keras
     if action == ACTION_TRAIN or action == ACTION_PREDICT or action == ACTION_EVALUATE or action == ACTION_SUMMARY:
         if network_model == MODEL_DUMMY:
             model = create_model_dummy(input_size=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel, transfer_learning=transfer_learning)
@@ -860,132 +998,56 @@ def main():
         logger.debug("dataset_images_path=" + dataset_images_path)
         logger.debug("epochs=" + str(epochs))
         logger.debug("batch_size=" + str(batch_size))
-        logger.debug("TRAINSET=" + training_files_regexp)
-        training_start = datetime.datetime.now().replace(microsecond=0)
-
-        # Creating a source dataset
-        TRAINSET_SIZE = len(glob(training_files_regexp))
-        print(f"The Training Dataset contains {TRAINSET_SIZE} images.")
-
-        VALSET_SIZE = len(glob(validation_files_regexp))
-        print(f"The Validation Dataset contains {VALSET_SIZE} images.")
-
-        if TRAINSET_SIZE == 0 or VALSET_SIZE == 0:
-            print("ERROR: Training dataset and validation datasets must be not empty!")
-            exit()
-
-        STEPS_PER_EPOCH = TRAINSET_SIZE // batch_size
-        VALIDATION_STEPS = VALSET_SIZE // batch_size
-
-        logger.debug("STEPS_PER_EPOCH=" + str(STEPS_PER_EPOCH))
-        logger.debug("VALIDATION_STEPS=" + str(VALIDATION_STEPS))
-        if STEPS_PER_EPOCH == 0:
-            print("ERROR: Not enough images for the training process!")
-            exit()
-
-        train_dataset = tf.data.Dataset.list_files(training_files_regexp, seed=SEED)
-        train_dataset = train_dataset.map(parse_image)
-
-        val_dataset = tf.data.Dataset.list_files(validation_files_regexp, seed=SEED)
-        val_dataset = val_dataset.map(parse_image)
-
-        dataset = {"train": train_dataset, "val": val_dataset}
-
-        # -- Train Dataset --#
-        dataset['train'] = dataset['train'].map(load_image, num_parallel_calls=tf.data.AUTOTUNE)
-        dataset['train'] = dataset['train'].cache()
-        # dataset['train'] = dataset['train'].shuffle(buffer_size=BUFFER_SIZE, seed=SEED)
-        dataset['train'] = dataset['train'].batch(batch_size)
-        dataset['train'] = dataset['train'].repeat()
-        dataset['train'] = dataset['train'].map(Augment())
-        dataset['train'] = dataset['train'].prefetch(buffer_size=tf.data.AUTOTUNE)
-
-        # train_batches = (
-        #     train_images
-        #     .cache()
-        #     .shuffle(BUFFER_SIZE)
-        #     .batch(BATCH_SIZE)
-        #     .repeat()
-        #     .map(Augment())
-        #     .prefetch(buffer_size=tf.data.AUTOTUNE))
-
-        # -- Validation Dataset --#
-        dataset['val'] = dataset['val'].map(load_image)
-        dataset['val'] = dataset['val'].repeat()
-        dataset['val'] = dataset['val'].batch(batch_size)
-        dataset['val'] = dataset['val'].prefetch(buffer_size=tf.data.AUTOTUNE)
-
-        logger.debug(dataset['train'])
-        logger.debug(dataset['val'])
-
-        # how shuffle works: https://stackoverflow.com/a/53517848
-
-        # Visualize the content of our dataloaders to make sure everything is fine.
-        if check or save_some_predictions:
-            print("Displaying content of dataset to make sure everything is fine...")
-            for image, mask in dataset['train'].take(3):
-                sample_image, sample_mask = image, mask
-                nvalues = 0
-                for i in range(256):
-                    n = np.sum(sample_mask[0] == i)
-                    nvalues += n
-                    print("Number of {} in mask={}".format(i, n))
-                print("Number of values found: " + str(nvalues))
-                plot_samples_matplotlib([sample_image[0], sample_mask[0]],
-                                        ["Sample image", "Ground truth"])
+        logger.debug("training_files_regexp=" + training_files_regexp)
         
-        logger.info("Start network training...")
-        model_history = train_network(model, dataset, epochs, STEPS_PER_EPOCH, VALIDATION_STEPS)
-        training_end = datetime.datetime.now().replace(microsecond=0)
-        logger.info("Network training end.")
-
-        fn, _ = os.path.splitext(os.path.basename(weights_fname))
+        # get file names
+        training_files_list = list(glob(training_files_regexp))
+        validation_files_list = list(glob(validation_files_regexp))
         
-        # Save performances to file
-        fn_perf = "perf_" + fn + "_" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + ".txt"
-        print("Saving performances to file..." + fn_perf)
-        # Save invocation command line
-        print("Invocation command: ", end="", file=open(fn_perf, 'a'))
-        narg = len(sys.argv)
-        for x in range(narg):
-            print(sys.argv[x], end = " ", file=open(fn_perf, 'a'))
-        print("\n", file=open(fn_perf, 'a'))
-        # Save performance information        
-        training_time = training_end - training_start
-        print("Training time: {}\n".format(training_time), file=open(fn_perf, 'a'))
-        for key in model_history.history.keys():
-            print("{}: {:.4f}".format(key,  model_history.history[key][-1]), file=open(fn_perf, 'a'))
+        timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        fn, fext = os.path.splitext(os.path.basename(weights_fname))
+        fn_perf = "perf_" + fn + "_" + timestamp + ".txt"
+        
+        if kfold_num > 0:
+            files_list = training_files_list + validation_files_list
+            logger.debug("Training fold: " + str(kfold_num))
 
-        # Plot loss functions
-        loss = model_history.history['loss']
-        val_loss = model_history.history['val_loss']
-        plt.figure()
-        plt.plot(model_history.epoch, loss, 'r', label='Training loss')
-        plt.plot(model_history.epoch, val_loss, 'bo', label='Validation loss')
-        plt.title('Training and Validation Loss')
-        plt.xlabel('Epoch')
-        plt.ylabel('Loss Value')
-        #  plt.ylim([0, 1])
-        plt.legend()
-        fn_plot = "plot_" + fn + "_" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + ".png"
-        print("Saving plot to file..." + fn_plot)
-        plt.savefig(fn_plot)
-        if check:
-            plt.show()
+            dice_coeffs = []
+            kf = KFold(n_splits=kfold_num, shuffle=True)
+         
+            for k, (train_index, test_index) in enumerate(kf.split(files_list)):
+                print ("Fold n.{}".format(k))
+                tstamp = timestamp + "_k" + str(k)
+                train_files = [files_list[i] for i in train_index]
+                val_files = [files_list[i] for i in test_index]
+                # print(train_files)
+
+                weights_fname = fn + "_" + tstamp + fext
+                fn_pred = "pred_" + fn + "_" + tstamp + ".png"
+                
+                model_history = train_network(train_files, val_files, epochs, batch_size, weights_fname, tstamp, fn_pred)
+
+                 # Evaluate model on test set (best weights have been loaded in train_network!)
+                print("Evaluating model on test set...")
+                
+                scores = do_evaluate(dataset_root_dir=dataset_root_dir, batch_size=batch_size, perf_file=fn_perf)
+                print(str(scores[2]))
+                dice_coeffs.append(scores[2])
+
+            print("Compute dice and save to file " + fn_perf)
+            dice_avg = np.mean(np.array(dice_coeffs))
+            dice_std = np.std(np.array(dice_coeffs))
+            print("Dice on target class: average {:.4f} +/- std {:.4f}".format(dice_avg,dice_std), file=open(fn_perf, 'a'))
         else:
-            plt.close()
-        # Save some predictions at the end of the training
-        print("Saving some predictions to file...")
-        fn_pred = "pred_" + fn + "_" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + ".png"
-        show_predictions(dataset['train'], 4, fname = fn_pred)
-        # Save all network structure (model, weights, optimizer, ...)
-        fn_model = "model_" + fn + "_" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-        print("Saving network model and weights to file..." + fn_model)
-        model.save(fn_model)
+            weights_fname = fn + "_" + timestamp + fext
+            fn_pred = "pred_" + fn + "_" + timestamp + ".png"
+            fn_perf = "perf_" + fn + "_" + timestamp + ".txt"
 
-        # Evaluate model on test set
-        print("Evaluating model on test set...")
-        do_evaluate(dataset_root_dir=dataset_root_dir, batch_size=batch_size, perf_file=fn_perf)
+            model_history = train_network(training_files_list, validation_files_list, epochs, batch_size, weights_fname, timestamp, fn_pred)
+
+            # Evaluate model on test set (best weights have been loaded in train_network fucntion!)
+            print("Evaluating model on test set...")
+            do_evaluate(dataset_root_dir=dataset_root_dir, batch_size=batch_size, perf_file=fn_pred)
 
     elif args.action == ACTION_PREDICT:
         if args.input_image is None:
