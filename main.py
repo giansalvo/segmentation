@@ -49,7 +49,6 @@ from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.preprocessing import image
 from tensorflow.keras import backend as K
 from keras.utils.layer_utils import count_params
-#from tensorflow.keras.backend import manual_variable_initialization
 from tensorflow.keras.layers import *   # used here for creating dummy network model
 import tensorflow_addons as tfa
 from PIL import Image
