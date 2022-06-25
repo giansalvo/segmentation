@@ -27,12 +27,15 @@ import tensorflow as tf
 # pip install -q git+https://github.com/tensorflow/examples.git
 from tensorflow_examples.models.pix2pix import pix2pix
 
-TRANSF_LEARN_IMAGENET_AND_FREEZE_DOWN = "imagenet_freeze_down"
-TRANSF_LEARN_LOAD_FILE = "load_file"
+TRANSF_LEARN_IMAGENET_AND_FREEZE_ENCODER = "imagenet_freeze_encoder"
+TRANSF_LEARN_IMAGENET_AND_FREEZE_DECODER = "imagenet_freeze_decoder"
+TRANSF_LEARN_FREEZE_ENCODER = "freeze_encoder"
+TRANSF_LEARN_FREEZE_ENCODER = "freeze_decoder"
+
 
 def create_model_UNet2(output_channels:int, input_size=128, classes=3, transfer_learning=None):
   print("unet2.py: WARNING parameter 'classes' not used. Reserved for future uses.")   # TODO parameter classes not used
-  if transfer_learning == TRANSF_LEARN_IMAGENET_AND_FREEZE_DOWN:
+  if transfer_learning == TRANSF_LEARN_IMAGENET_AND_FREEZE_ENCODER or transfer_learning == TRANSF_LEARN_IMAGENET_AND_FREEZE_DECODER:
     print("unet2.py: detected transfer learning: schedule imagenet weights to be loaded.")
     w = "imagenet"
   else:
@@ -50,13 +53,20 @@ def create_model_UNet2(output_channels:int, input_size=128, classes=3, transfer_
       'block_16_project',      # 4x4
   ]
   base_model_outputs = [base_model.get_layer(name).output for name in layer_names]
-
+ 
   # Create the feature extraction model
   down_stack = tf.keras.Model(inputs=base_model.input, outputs=base_model_outputs)
 
-  if transfer_learning == TRANSF_LEARN_IMAGENET_AND_FREEZE_DOWN or transfer_learning == TRANSF_LEARN_LOAD_FILE:
+  if transfer_learning == TRANSF_LEARN_IMAGENET_AND_FREEZE_ENCODER or transfer_learning == TRANSF_LEARN_FREEZE_ENCODER:
     print("unet2.py: detected transfer learning: freeze down_stack weights.")
+    base_model.trainable = False
+    # for layer in base_model.layers:
+    #   print(layer.get_)
+    #   layer.trainable = False
     down_stack.trainable = False
+    # for layer in down_stack.layers:
+    #   layer.trainable = False
+
 
   up_stack = [
       pix2pix.upsample(512, 3),  # 4x4 -> 8x8
@@ -77,6 +87,11 @@ def create_model_UNet2(output_channels:int, input_size=128, classes=3, transfer_
     x = up(x)
     concat = tf.keras.layers.Concatenate()
     x = concat([x, skip])
+    if transfer_learning == TRANSF_LEARN_IMAGENET_AND_FREEZE_DECODER:
+      concat.trainable = False
+      x.trainable = False
+      up.trainable = False
+    
 
   # This is the last layer of the model
   last = tf.keras.layers.Conv2DTranspose(

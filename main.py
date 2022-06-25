@@ -48,7 +48,8 @@ from IPython.display import clear_output
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.preprocessing import image
 from tensorflow.keras import backend as K
-from tensorflow.keras.backend import manual_variable_initialization
+from keras.utils.layer_utils import count_params
+#from tensorflow.keras.backend import manual_variable_initialization
 from tensorflow.keras.layers import *   # used here for creating dummy network model
 import tensorflow_addons as tfa
 from PIL import Image
@@ -79,10 +80,12 @@ MODEL_DEEPLABV3PLUS = "deeplabv3plus"   # DEPRECATED
 MODEL_DEEPLABV3PLUS_XCEPTION = "deeplabv3plus_xception"
 MODEL_DEEPLABV3PLUS_MOBILENETV2 = "deeplabv3plus_mobilenetv2"
 REGEXP_DEFAULT = "*.png"
-TRANSF_LEARN_IMAGENET_AND_FREEZE_DOWN = "imagenet_freeze_down"  # must match with the definition in unet2.py
+TRANSF_LEARN_IMAGENET_AND_FREEZE_DECODER = "imagenet_freeze_decoder"
+TRANSF_LEARN_IMAGENET_AND_FREEZE_ENCODER = "imagenet_freeze_encoder"  # must match with the definition in unet2.py
 TRANSF_LEARN_PASCAL_VOC = "pascal_voc"
 TRANSF_LEARN_CITYSCAPES = "cityscapes"
-TRANSF_LEARN_LOAD_FILE = "load_file"
+TRANSF_LEARN_FREEZE_ENCODER = "freeze_encoder"
+TRANSF_LEARN_FREEZE_DECODER = "freeze_decoder"
 
 # folders' structure
 DATASET_IMG_SUBDIR = "images"
@@ -97,12 +100,13 @@ DEFAULT_LOGS_DIR = "logs"
 # https://stackoverflow.com/questions/46444018/meaning-of-buffer-size-in-dataset-map-dataset-prefetch-and-dataset-shuffle
 BUFFER_SIZE = 1000
 EPOCHS = 100
-SEED = 42       # this allows to generate the same random numbers
+SEED = 1974       # this allows to generate the same random numbers
 IMG_SIZE = 128  # Image size that we are going to use
 N_CHANNELS = 3  # Our images are RGB (3 channels)
 N_CLASSES = 3   # Scene Parsing has 150 classes + `not labeled` (151)
 TARGET_CLASS = 1    # class of foreground, it will be used to compute dice coeff.
 BATCH_SIZE = 64
+TEMP_WEIGHTS_FILE = "weights_temp.h5"
 dataset_root_dir = ""
 check = False
 save_some_predictions = False
@@ -185,28 +189,22 @@ def normalize(input_image: tf.Tensor, input_mask: tf.Tensor) -> tuple:
     input_mask -= 1
     return input_image, input_mask
 
-
 class Augment(tf.keras.layers.Layer):
   def __init__(self, seed=SEED):
     super().__init__()
-    # self.augment_inputs = tf.keras.layers.RandomFlip(mode="horizontal")
-    # self.augment_inputs = tf.keras.layers.RandomRotation(0.25)
-    # self.augment_inputs = tf.keras.layers.RandomZoom(0.25)
-    # # masks
-    # self.augment_labels = tf.keras.layers.RandomFlip(mode="horizontal")
-    # self.augment_labels = tf.keras.layers.RandomRotation(0.25)
-    # self.augment_inputs = tf.keras.layers.RandomZoom(0.25)
 
   def call(self, inputs, labels):
     if tf.random.uniform(()) > 0.5:
-        inputs = tf.keras.layers.RandomFlip(mode="horizontal")(inputs)
-        labels = tf.keras.layers.RandomFlip(mode="horizontal")(labels)
-    if tf.random.uniform(()) > 0.5:
-        inputs = tf.keras.layers.RandomRotation(0.25)(inputs)
-        labels = tf.keras.layers.RandomRotation(0.25)(labels)
-    if tf.random.uniform(()) > 0.5:
-        inputs = tf.keras.layers.RandomZoom(0.25)(inputs)
-        labels = tf.keras.layers.RandomZoom(0.25)(labels)
+        inputs = tf.image.flip_left_right(inputs)
+        labels = tf.image.flip_left_right(labels)
+    # apply rotation: 50% no rotation; 25% rotation right; 25% rotation left
+    # rot = tf.random.uniform(())
+    # if rot < 1./4:
+    #     inputs = tfa.image.rotate(inputs, 0.25)
+    #     labels = tfa.image.rotate(labels, 0.25)
+    # elif rot < 1./2:
+    #     inputs = tfa.image.rotate(inputs, -0.25)
+    #     labels = tfa.image.rotate(labels, -0.25)
     return inputs, labels
 
 
@@ -781,7 +779,8 @@ def train_network(train_files, val_files, epochs, batch_size, weights_fname, tim
         plt.close()
 
     # Reload best weights
-    model.load_weights(weights_fname)
+    if os.path.exists(weights_fname):
+        model.load_weights(weights_fname)
     # Save network structure (model, weights, optimizer, ...)
     fn_model = "model_" + fn
     print("Saving network model and weights to file..." + fn_model)
@@ -794,6 +793,32 @@ def train_network(train_files, val_files, epochs, batch_size, weights_fname, tim
     # tf.keras.backend.clear_session()
     return model_history
 
+
+def summary_short(model):
+    for layer in model.layers:
+        logger.debug("layer: {} \t\ttrainable: {}".format(layer.name, layer.trainable))
+    trainable_count = count_params(model.trainable_weights)
+    non_trainable_count = count_params(model.non_trainable_weights)      
+    logger.debug("Trainable weights={:,d}, Non trainable weights={:,d}".format(trainable_count, non_trainable_count))
+
+
+def set_model_trainable_stauts(model, value):
+    for layer in model.layers:
+        layer.trainable = value
+
+
+def save_model_trainable_status(model):
+    temp_layers = []
+    for layer in model.layers:
+        temp_layers.append(layer.trainable)
+    return temp_layers
+
+
+def restore_model_trainable_status(model, status):
+    i = 0
+    for layer in model.layers:
+        layer.trainable = status[i]
+        i += 1
 
 #########################
 # MAIN STARTS HERE
@@ -874,7 +899,7 @@ def main():
     parser.add_argument('-ir', '--initial_root_dir', required=False, help="The initial root directory of images and trimaps.")
     parser.add_argument('-dr', '--dataset_root_dir', required=False, help="The root directory of the dataset.")
     parser.add_argument("-w", "--weigths_file", required=False,
-                        help="The weigths file to be loaded/saved. It must be compatible with the network model chosen.")
+                        help="The file where the network weights will be saved. It must be compatible with the network model chosen.")
     parser.add_argument("-i", "--input_image", required=False, help="The input file to be segmented.")
     parser.add_argument("-o", "--output_file", required=False, help="The output file with the segmented image.")
     parser.add_argument("-s", "--split_percentage", nargs=3, metavar=('train_p', 'validation_p', 'test_p' ),
@@ -894,13 +919,15 @@ def main():
     parser.add_argument("-lr", "--learning_rate", required=False, type=float, default=learn_rate, 
                         help="The learning rate of the optimizer funtion during the training.")
     parser.add_argument('-tl', "--transfer_learning", required=False, default=None, 
-                        choices=(TRANSF_LEARN_IMAGENET_AND_FREEZE_DOWN, TRANSF_LEARN_PASCAL_VOC, TRANSF_LEARN_CITYSCAPES, TRANSF_LEARN_LOAD_FILE), 
+                        choices=(TRANSF_LEARN_IMAGENET_AND_FREEZE_DECODER, TRANSF_LEARN_IMAGENET_AND_FREEZE_ENCODER, TRANSF_LEARN_PASCAL_VOC, TRANSF_LEARN_CITYSCAPES, TRANSF_LEARN_FREEZE_ENCODER, TRANSF_LEARN_FREEZE_DECODER), 
                         help="The transfer learning option. Not all network models support all options.")
     parser.add_argument('-c', "--classes", required=False, default=N_CLASSES, type=int,
                         help="The number of possible classes that each pixel can belong to.")
     parser.add_argument('-k', "--kfold_num", required=False, default=0, type=int,
                         help="Speficy the number of folds for the K-folds cross validation. If not specified the traditional"
                         "folder split technique will be used.")
+    parser.add_argument('-iw', "--initialize_weights", required=False, default=None,
+                        help="Speficy the file to be used to initialize the weights. It must be compatible with the network model chosen.")
 
     args = parser.parse_args()
 
@@ -919,6 +946,7 @@ def main():
     classes_for_pixel = args.classes
     action = args.action
     kfold_num = args.kfold_num
+    init_weights_fname = args.initialize_weights
 
     logger.debug("action=" + str(action))
     logger.debug("dataset_root_dir=" + str(dataset_root_dir))
@@ -930,9 +958,14 @@ def main():
     logger.debug("transfer_learning=" + str(transfer_learning))
     logger.debug("classes_for_pixel=" + str(classes_for_pixel))
     logger.debug("kfold_num=" + str(kfold_num))
+    logger.debug("kfold_num=" + str(init_weights_fname))
 
     # create the network architecture with keras
-    if action == ACTION_TRAIN or action == ACTION_PREDICT or action == ACTION_EVALUATE or action == ACTION_SUMMARY:
+    if network_structure_path is not None:
+        print("Loading network model from " + network_structure_path)
+        model = tf.keras.models.load_model(network_structure_path, custom_objects={'dice_coef': dice_target_class})
+    elif action == ACTION_TRAIN or action == ACTION_PREDICT or action == ACTION_EVALUATE or action == ACTION_SUMMARY:
+        print("Creating network model...")
         if network_model == MODEL_DUMMY:
             model = create_model_dummy(input_size=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel, transfer_learning=transfer_learning)
         elif network_model == MODEL_UNET:
@@ -961,17 +994,18 @@ def main():
             # BUG
             raise ValueError('BUG: Model of network not supported.')
 
-        if transfer_learning == TRANSF_LEARN_LOAD_FILE:
-            print("Transfer learning from local file detected.")
-            if network_structure_path is not None:
-                print("Loading network model from " + network_structure_path)
-                model = tf.keras.models.load_model(network_structure_path, custom_objects={'dice_coef': dice_coef})
-            elif weights_fname is not None:
-                print("Loading network weights from file " + weights_fname)
-                model.load_weights(weights_fname)
-            else:
-                print("ERROR: network_structure_path or weights_fname argument must be provided.")
-                exit(1)
+        summary_short(model)
+
+        if init_weights_fname is not None:
+            logger.debug("Save model trainable status and unfreeze all layers...")
+            trainable_status = save_model_trainable_status(model)
+            set_model_trainable_stauts(model, True)
+
+            print("Initializing network weights from file " + init_weights_fname)
+            model.load_weights(init_weights_fname, by_name=False)
+
+            logger.debug("Restore model trainable status...")
+            restore_model_trainable_status(model, trainable_status)        
 
         # optimizer=tfa.optimizers.RectifiedAdam(lr=1e-3)
         optimizer = tf.keras.optimizers.Adam(learning_rate=learn_rate)
@@ -982,7 +1016,7 @@ def main():
         metrics = ['sparse_categorical_accuracy', dice_target_class]
         print("Compiling the network model...")
         model.compile(optimizer=optimizer, loss=loss, metrics=metrics, run_eagerly=True) 
-    
+
     if args.action == ACTION_TRAIN:
         if weights_fname is None:
             raise ValueError('You must specify a weights filename parameter (-w) for training.')
@@ -1012,6 +1046,7 @@ def main():
             files_list = training_files_list + validation_files_list
             logger.debug("Training fold: " + str(kfold_num))
 
+            model.save_weights(TEMP_WEIGHTS_FILE)
             dice_coeffs = []
             kf = KFold(n_splits=kfold_num, shuffle=True)
          
@@ -1025,6 +1060,7 @@ def main():
                 weights_fname = fn + "_" + tstamp + fext
                 fn_pred = "pred_" + fn + "_" + tstamp + ".png"
                 
+                model.load_weights(TEMP_WEIGHTS_FILE)
                 model_history = train_network(train_files, val_files, epochs, batch_size, weights_fname, tstamp, fn_pred)
 
                  # Evaluate model on test set (best weights have been loaded in train_network!)
@@ -1047,7 +1083,8 @@ def main():
 
             # Evaluate model on test set (best weights have been loaded in train_network fucntion!)
             print("Evaluating model on test set...")
-            do_evaluate(dataset_root_dir=dataset_root_dir, batch_size=batch_size, perf_file=fn_perf)
+            scores = do_evaluate(dataset_root_dir=dataset_root_dir, batch_size=batch_size, perf_file=fn_perf)
+            print(str(scores[2]))
 
     elif args.action == ACTION_PREDICT:
         if args.input_image is None:
@@ -1096,9 +1133,22 @@ def main():
         im = generate_colormap_image(output_fname)  # TODO this should take the 3map image in memory and not the greyscale file
         im.save(out_cmap_fname)
 
-        # if check is set, then display image to screen
+        # if check is set, then display prediction
         if check:
-            plot_samples_matplotlib([img0, prediction])
+            fn, fext = os.path.splitext(os.path.basename(input_fname))
+            truth_path = os.path.join(os.path.dirname(input_fname), "..", "..", DATASET_ANNOT_SUBDIR, DATASET_TRAIN_SUBDIR, fn + ".png")
+            if not os.path.exists(truth_path):
+                truth_path = os.path.join(os.path.dirname(input_fname), "..", "..", DATASET_ANNOT_SUBDIR, DATASET_VAL_SUBDIR, fn + ".png")
+                if not os.path.exists(truth_path):
+                    truth_path = os.path.join(os.path.dirname(input_fname), "..", "..", DATASET_ANNOT_SUBDIR, DATASET_TEST_SUBDIR, fn + ".png")
+            
+            if os.path.exists(truth_path):
+                logger.debug("Displaying ground truth image found here: {}".format(str(truth_path)))
+                truth = read_image(truth_path)
+                plot_samples_matplotlib([img0, truth, prediction], ["Sample", "Ground Truth", "Prediction"])
+            else:
+                plot_samples_matplotlib([img0, prediction], ["Sample", "Prediction"])
+
 
     elif args.action == ACTION_SUMMARY:
         # print network's structure summary and save whole architecture plus weigths

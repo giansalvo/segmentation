@@ -11,7 +11,10 @@ from tensorflow.keras.layers import Conv2DTranspose
 from tensorflow.keras.layers import concatenate
 from tensorflow.keras.losses import binary_crossentropy
 
-def EncoderMiniBlock(inputs, n_filters=32, dropout_prob=0.3, max_pooling=True):
+TRANSF_LEARN_FREEZE_ENCODER = "freeze_encoder"
+TRANSF_LEARN_FREEZE_DECODER = "freeze_decoder"
+
+def EncoderMiniBlock(inputs, n_filters=32, dropout_prob=0.3, max_pooling=True, trainable=True):
     """
     This block uses multiple convolution layers, max pool, relu activation to create an architecture for learning. 
     Dropout can be added for regularization to prevent overfitting. 
@@ -25,11 +28,14 @@ def EncoderMiniBlock(inputs, n_filters=32, dropout_prob=0.3, max_pooling=True):
                   activation='relu',
                   padding='same',
                   kernel_initializer='HeNormal')(inputs)
+    conv.trainable = trainable
+
     conv = Conv2D(n_filters, 
                   3,   # Kernel size
                   activation='relu',
                   padding='same',
                   kernel_initializer='HeNormal')(conv)
+    conv.trainable = trainable
     
     # Batch Normalization will normalize the output of the last layer based on the batch's mean and standard deviation
     conv = BatchNormalization()(conv, training=False)
@@ -51,7 +57,7 @@ def EncoderMiniBlock(inputs, n_filters=32, dropout_prob=0.3, max_pooling=True):
     
     return next_layer, skip_connection
 
-def DecoderMiniBlock(prev_layer_input, skip_layer_input, n_filters=32):
+def DecoderMiniBlock(prev_layer_input, skip_layer_input, n_filters=32, trainable=True):
     """
     Decoder Block first uses transpose convolution to upscale the image to a bigger size and then,
     merges the result with skip layer results from encoder block
@@ -75,31 +81,42 @@ def DecoderMiniBlock(prev_layer_input, skip_layer_input, n_filters=32):
                  activation='relu',
                  padding='same',
                  kernel_initializer='HeNormal')(merge)
+    conv.trainable = trainable
     conv = Conv2D(n_filters,
                  3,   # Kernel size
                  activation='relu',
                  padding='same',
                  kernel_initializer='HeNormal')(conv)
+    conv.trainable = trainable
     return conv
 
 def create_model_UNet_US(input_size=(128, 128, 3), n_filters=32, n_classes=2, transfer_learning=None):
     inputs = Input(input_size)
 
+    trainable = True
+    if transfer_learning == TRANSF_LEARN_FREEZE_ENCODER:
+        print("unet_us.py: detected transfer learning: freezing encoder layers.")
+        trainable = False
+
     # Encoder includes multiple convolutional mini blocks with different maxpooling, dropout and filter parameters
     # Observe that the filters are increasing as we go deeper into the network which will increasse the # channels of the image 
-    cblock1 = EncoderMiniBlock(inputs, n_filters,dropout_prob=0, max_pooling=True)
-    cblock2 = EncoderMiniBlock(cblock1[0],n_filters*2,dropout_prob=0, max_pooling=True)
-    cblock3 = EncoderMiniBlock(cblock2[0], n_filters*4,dropout_prob=0, max_pooling=True)
-    cblock4 = EncoderMiniBlock(cblock3[0], n_filters*8,dropout_prob=0.3, max_pooling=True)
-    cblock5 = EncoderMiniBlock(cblock4[0], n_filters*16, dropout_prob=0.3, max_pooling=False) 
+    cblock1 = EncoderMiniBlock(inputs, n_filters,dropout_prob=0, max_pooling=True, trainable=trainable)
+    cblock2 = EncoderMiniBlock(cblock1[0],n_filters*2,dropout_prob=0, max_pooling=True, trainable=trainable)
+    cblock3 = EncoderMiniBlock(cblock2[0], n_filters*4,dropout_prob=0, max_pooling=True, trainable=trainable)
+    cblock4 = EncoderMiniBlock(cblock3[0], n_filters*8,dropout_prob=0.3, max_pooling=True, trainable=trainable)
+    cblock5 = EncoderMiniBlock(cblock4[0], n_filters*16, dropout_prob=0.3, max_pooling=False, trainable=trainable) 
 
+    trainable = True
+    if transfer_learning == TRANSF_LEARN_FREEZE_DECODER:
+        print("unet_us.py: detected transfer learning: freezing decoder layers.")
+        trainable = False
     # Decoder includes multiple mini blocks with decreasing number of filters
     # Observe the skip connections from the encoder are given as input to the decoder
     # Recall the 2nd output of encoder block was skip connection, hence cblockn[1] is used
-    ublock6 = DecoderMiniBlock(cblock5[0], cblock4[1],  n_filters * 8)
-    ublock7 = DecoderMiniBlock(ublock6, cblock3[1],  n_filters * 4)
-    ublock8 = DecoderMiniBlock(ublock7, cblock2[1],  n_filters * 2)
-    ublock9 = DecoderMiniBlock(ublock8, cblock1[1],  n_filters)
+    ublock6 = DecoderMiniBlock(cblock5[0], cblock4[1],  n_filters * 8, trainable=trainable)
+    ublock7 = DecoderMiniBlock(ublock6, cblock3[1],  n_filters * 4, trainable=trainable)
+    ublock8 = DecoderMiniBlock(ublock7, cblock2[1],  n_filters * 2, trainable=trainable)
+    ublock9 = DecoderMiniBlock(ublock8, cblock1[1],  n_filters, trainable=trainable)
 
     # Complete the model with 1 3x3 convolution layer (Same as the prev Conv Layers)
     # Followed by a 1x1 Conv layer to get the image to the desired size. 

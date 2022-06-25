@@ -22,6 +22,8 @@
 from tensorflow.keras.layers import Conv2D, BatchNormalization, Activation, MaxPool2D, Conv2DTranspose, Concatenate, Input
 from tensorflow.keras.models import Model
 
+TRANSF_LEARN_FREEZE_ENCODER = "freeze_encoder"
+
 def conv_block(input, num_filters):
     x = Conv2D(num_filters, 3, padding="same")(input)
     x = BatchNormalization()(x)
@@ -52,6 +54,13 @@ def create_model_UNet3(input_shape=(128, 128, 3), classes=3, transfer_learning=N
     s2, p2 = encoder_block(p1, 128)
     s3, p3 = encoder_block(p2, 256)
     s4, p4 = encoder_block(p3, 512)
+
+    if transfer_learning == TRANSF_LEARN_FREEZE_ENCODER:
+        print("unet2.py: detected transfer learning: schedule imagenet weights to be loaded.")
+        s1.trainable = False
+        s2.trainable = False
+        s3.trainable = False
+        s4.trainable = False
 
     b1 = conv_block(p4, 1024)
 
