@@ -98,7 +98,8 @@ DEFAULT_LOGS_DIR = "logs"
 # for reference about the BUFFER_SIZE in shuffle:
 # https://stackoverflow.com/questions/46444018/meaning-of-buffer-size-in-dataset-map-dataset-prefetch-and-dataset-shuffle
 BUFFER_SIZE = 1000
-EPOCHS = 100
+PATIENCE = 8
+EPOCHS = 80
 SEED = 1974       # this allows to generate the same random numbers
 IMG_SIZE = 128  # Image size that we are going to use
 N_CHANNELS = 3  # Our images are RGB (3 channels)
@@ -188,14 +189,17 @@ def normalize(input_image: tf.Tensor, input_mask: tf.Tensor) -> tuple:
     input_mask -= 1
     return input_image, input_mask
 
+
 class Augment(tf.keras.layers.Layer):
   def __init__(self, seed=SEED):
     super().__init__()
+    self.augment_inputs = tf.image.flip_left_right
+    self.augment_labels = tf.image.flip_left_right
 
   def call(self, inputs, labels):
     if tf.random.uniform(()) > 0.5:
-        inputs = tf.image.flip_left_right(inputs)
-        labels = tf.image.flip_left_right(labels)
+        inputs = self.augment_inputs(inputs)
+        labels = self.augment_labels(labels)
     # apply rotation: 50% no rotation; 25% rotation right; 25% rotation left
     # rot = tf.random.uniform(())
     # if rot < 1./4:
@@ -239,6 +243,20 @@ def create_model_dummy(input_size=(128, 128, 3), classes=150, transfer_learning=
     output = Conv2D(classes, 1, activation='softmax')(inputs)
     model = tf.keras.Model(inputs=inputs, outputs=output, name="dummy_net")
     return model
+
+
+# Dice coeff (F1 score)
+# https://gist.github.com/wassname/7793e2058c5c9dacb5212c0ac0b18a8a
+def dice_coef(y_true, y_pred, epsilon=1e-6):
+    """
+    Dice = (2*|X & Y|)/ (|X| + |Y|)
+         =  2*sum(|A*B|) / (sum(A^2) + sum(B^2))
+    ref: https://arxiv.org/pdf/1606.04797v1.pdf
+    """
+    intersection = K.sum(K.abs(y_true * y_pred), axis=-1)
+    sum = K.sum(K.square(y_true),axis=-1) + K.sum(K.square(y_pred),axis=-1)
+    coeff = (2. * intersection + epsilon) / (sum + epsilon)
+    return 1 - coeff
 
 
 # this metric should perform like keras metric sparse_categorical_accuracy,
@@ -512,7 +530,7 @@ def fit_network(network_model, images_dataset, epochs, steps_per_epoch, validati
         # to collect some useful metrics and visualize them in tensorboard
         tensorboard_callback,
         # if no accuracy improvements we can stop the training directly
-        tf.keras.callbacks.EarlyStopping(patience=10, verbose=1),
+        tf.keras.callbacks.EarlyStopping(patience=PATIENCE, verbose=1),
         # to save checkpoints
         tf.keras.callbacks.ModelCheckpoint(weights_fname, 
                                         verbose=1,
@@ -801,23 +819,23 @@ def summary_short(model):
     logger.debug("Trainable weights={:,d}, Non trainable weights={:,d}".format(trainable_count, non_trainable_count))
 
 
-def set_model_trainable_stauts(model, value):
-    for layer in model.layers:
-        layer.trainable = value
+# def set_model_trainable_stauts(model, value):
+#     for layer in model.layers:
+#         layer.trainable = value
 
 
-def save_model_trainable_status(model):
-    temp_layers = []
-    for layer in model.layers:
-        temp_layers.append(layer.trainable)
-    return temp_layers
+# def save_model_trainable_status(model):
+#     temp_layers = []
+#     for layer in model.layers:
+#         temp_layers.append(layer.trainable)
+#     return temp_layers
 
 
-def restore_model_trainable_status(model, status):
-    i = 0
-    for layer in model.layers:
-        layer.trainable = status[i]
-        i += 1
+# def restore_model_trainable_status(model, status):
+#     i = 0
+#     for layer in model.layers:
+#         layer.trainable = status[i]
+#         i += 1
 
 #########################
 # MAIN STARTS HERE
@@ -861,6 +879,12 @@ def main():
     logger.info("Python ver.: " + sys.version)
     logger.info("Python executable: " + str(executable))
     logger.info("Tensorflow ver. " + str(tf.__version__))
+    # Print invocation command line
+    cmd_line = ""
+    narg = len(sys.argv)
+    for x in range(narg):
+        cmd_line += " " + sys.argv[x]
+    logger.debug("Invocation command: " + cmd_line)        
 
     parser = argparse.ArgumentParser(
         description=COPYRIGHT_NOTICE,
@@ -952,17 +976,17 @@ def main():
     logger.debug("weights_fname=" + str(weights_fname))
     logger.debug("network_model=" + str(network_model))
     logger.debug("network_structure_path=" + str(network_structure_path))
+    logger.debug("init_weights_fname=" + str(init_weights_fname))
     logger.debug("logs_dir=" + str(logs_dir))
     logger.debug("learn_rate=" + str(learn_rate))
     logger.debug("transfer_learning=" + str(transfer_learning))
     logger.debug("classes_for_pixel=" + str(classes_for_pixel))
     logger.debug("kfold_num=" + str(kfold_num))
-    logger.debug("kfold_num=" + str(init_weights_fname))
 
     # create the network architecture with keras
     if network_structure_path is not None:
         print("Loading network model from " + network_structure_path)
-        model = tf.keras.models.load_model(network_structure_path, custom_objects={'dice_coef': dice_target_class})
+        model = tf.keras.models.load_model(network_structure_path, custom_objects={'dice_coef': dice_coef})
     elif action == ACTION_TRAIN or action == ACTION_PREDICT or action == ACTION_EVALUATE or action == ACTION_SUMMARY:
         print("Creating network model...")
         if network_model == MODEL_DUMMY:
@@ -993,18 +1017,12 @@ def main():
             # BUG
             raise ValueError('BUG: Model of network not supported.')
 
-        summary_short(model)
 
         if init_weights_fname is not None:
-            logger.debug("Save model trainable status and unfreeze all layers...")
-            trainable_status = save_model_trainable_status(model)
-            set_model_trainable_stauts(model, True)
-
             print("Initializing network weights from file " + init_weights_fname)
             model.load_weights(init_weights_fname, by_name=False)
 
-            logger.debug("Restore model trainable status...")
-            restore_model_trainable_status(model, trainable_status)        
+        summary_short(model)
 
         # optimizer=tfa.optimizers.RectifiedAdam(lr=1e-3)
         optimizer = tf.keras.optimizers.Adam(learning_rate=learn_rate)
@@ -1056,7 +1074,7 @@ def main():
                 val_files = [files_list[i] for i in test_index]
                 # print(train_files)
 
-                weights_fname = fn + "_" + tstamp + fext
+                weights_fname = fn + "_k_" + str(k) + fext
                 fn_pred = "pred_" + fn + "_" + tstamp + ".png"
                 
                 model.load_weights(TEMP_WEIGHTS_FILE)
@@ -1074,7 +1092,7 @@ def main():
             dice_std = np.std(np.array(dice_coeffs))
             print("Dice on target class: average {:.4f} +/- std {:.4f}".format(dice_avg,dice_std), file=open(fn_perf, 'a'))
         else:
-            weights_fname = fn + "_" + timestamp + fext
+            weights_fname = fn + fext
             fn_pred = "pred_" + fn + "_" + timestamp + ".png"
             fn_perf = "perf_" + fn + "_" + timestamp + ".txt"
 
@@ -1117,36 +1135,35 @@ def main():
         prediction = infer(model=model, image_tensor=img_tensor)
         
         # compute trimap output and save image to disk
-        print("Saving trimap output segmented image to file: " + out_3map_fname)
-        img1 = tf.cast(prediction, tf.uint8)
-        img1 = tf.image.encode_jpeg(img1)
-        tf.io.write_file(out_3map_fname, img1)
+        # print("Saving trimap output segmented image to file: " + out_3map_fname)
+        # img1 = tf.cast(prediction, tf.uint8)
+        # img1 = tf.image.encode_jpeg(img1)
+        # tf.io.write_file(out_3map_fname, img1)
 
         # compute grayscale segmented image and save it to disk
-        print("Saving grayscale segmented image to file: " + output_fname)
-        jpeg = generate_greyscale_image(prediction)
-        tf.io.write_file(output_fname, jpeg)
+        # print("Saving grayscale segmented image to file: " + output_fname)
+        # jpeg = generate_greyscale_image(prediction)
+        # tf.io.write_file(output_fname, jpeg)
     
         # compute colored segmented image and save it to disk
-        print("Saving colored segmented image to file: " + out_cmap_fname)
-        im = generate_colormap_image(output_fname)  # TODO this should take the 3map image in memory and not the greyscale file
-        im.save(out_cmap_fname)
+        # print("Saving colored segmented image to file: " + out_cmap_fname)
+        # im = generate_colormap_image(output_fname)  # TODO this should take the 3map image in memory and not the greyscale file
+        # im.save(out_cmap_fname)
 
-        # if check is set, then display prediction
-        if check:
-            fn, fext = os.path.splitext(os.path.basename(input_fname))
-            truth_path = os.path.join(os.path.dirname(input_fname), "..", "..", DATASET_ANNOT_SUBDIR, DATASET_TRAIN_SUBDIR, fn + ".png")
+        fn, fext = os.path.splitext(os.path.basename(input_fname))
+        truth_path = os.path.join(os.path.dirname(input_fname), "..", "..", DATASET_ANNOT_SUBDIR, DATASET_TRAIN_SUBDIR, fn + ".png")
+        if not os.path.exists(truth_path):
+            truth_path = os.path.join(os.path.dirname(input_fname), "..", "..", DATASET_ANNOT_SUBDIR, DATASET_VAL_SUBDIR, fn + ".png")
             if not os.path.exists(truth_path):
-                truth_path = os.path.join(os.path.dirname(input_fname), "..", "..", DATASET_ANNOT_SUBDIR, DATASET_VAL_SUBDIR, fn + ".png")
-                if not os.path.exists(truth_path):
-                    truth_path = os.path.join(os.path.dirname(input_fname), "..", "..", DATASET_ANNOT_SUBDIR, DATASET_TEST_SUBDIR, fn + ".png")
-            
-            if os.path.exists(truth_path):
-                logger.debug("Displaying ground truth image found here: {}".format(str(truth_path)))
-                truth = read_image(truth_path)
-                plot_samples_matplotlib([img0, truth, prediction], ["Sample", "Ground Truth", "Prediction"])
-            else:
-                plot_samples_matplotlib([img0, prediction], ["Sample", "Prediction"])
+                truth_path = os.path.join(os.path.dirname(input_fname), "..", "..", DATASET_ANNOT_SUBDIR, DATASET_TEST_SUBDIR, fn + ".png")
+        
+        fout = "pred_" + fn + ".jpg"
+        if os.path.exists(truth_path):
+            logger.debug("Displaying ground truth image found here: {}".format(str(truth_path)))
+            truth = read_image(truth_path)
+            plot_samples_matplotlib([img0, truth, prediction], ["Sample", "Ground Truth", "Prediction"], fname=fout)
+        else:
+            plot_samples_matplotlib([img0, prediction], ["Sample", "Prediction"], fname=fout)
 
 
     elif args.action == ACTION_SUMMARY:
