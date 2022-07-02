@@ -1,4 +1,5 @@
 # https://www.kaggle.com/code/vidushibhatia/2-ultrasound-nerve-seg-unet-from-scratch
+# https://colab.research.google.com/gist/kumarikanak/254381203742483cbe0ddce4f64945e6/u-net-implementation.ipynb#scrollTo=f5i7Thf4FDFG
 
 
 # for bulding and running deep learning model
