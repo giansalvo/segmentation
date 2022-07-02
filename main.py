@@ -105,6 +105,10 @@ IMG_SIZE = 128  # Image size that we are going to use
 N_CHANNELS = 3  # Our images are RGB (3 channels)
 N_CLASSES = 3   # Scene Parsing has 150 classes + `not labeled` (151)
 TARGET_CLASS = 1    # class of foreground, it will be used to compute dice coeff.
+# PIXEL CLASSES BEFORE NORMALISATION
+# 1 FOREGROUND
+# 2 BORDER
+# 3 BACKGROUND
 BATCH_SIZE = 64
 TEMP_WEIGHTS_FILE = "weights_temp.h5"
 dataset_root_dir = ""
@@ -300,6 +304,35 @@ def multiclass_accuracy(Y_true, Y_pred):
     # compute the average accuracy for the whole batch
     accuracy_batch = accuracy_batch / nbatch_size
     return accuracy_batch
+
+
+def dice_multiclass(y_true, y_pred, epsilon=1e-5):
+    """
+    Dice = (2*|X & Y|)/ (|X| + |Y|)
+    """
+    y_pred = tf.argmax(y_pred, -1)
+    y_pred = tf.cast(y_pred, tf.uint8)
+    y_pred = tf.squeeze(y_pred)
+
+    # compute intermediate tensor for ground truth
+    y_true = tf.cast(y_true, tf.uint8)
+    y_true = tf.squeeze(y_true)
+
+    dice = 0
+    for i in range(N_CLASSES):
+        pred_i = tf.cast(tf.equal(y_pred, i), tf.uint32) # subset of prediction for i class
+        true_i = tf.cast(tf.equal(y_true, i), tf.uint32) # subset of mask for i class
+        # temp = tf.equal(X, Y) # intersection of X and Y (boolean values)
+        # temp = tf.cast(temp, tf.uint32)        # convert to 0/1
+        inters_i = tf.keras.backend.eval(tf.reduce_sum(pred_i*true_i))
+        union_i = tf.keras.backend.eval(tf.reduce_sum(pred_i)+tf.reduce_sum(true_i))
+
+        #tf.print("\n"+str(i)+" " +str(inters_i)+" "+str(union_i))
+        dice += (2. * inters_i + epsilon) / (union_i + epsilon)
+    dice = dice / N_CLASSES
+
+    # tf.print(str(pred_i*true_i))
+    return dice
 
 
 """
@@ -620,23 +653,25 @@ def plot_samples_matplotlib(display_list, labels_list=None, figsize=None, fname=
         i = i_img // NIMG_PER_COLS
         j = i_img % NIMG_PER_COLS
         if display_list[i_img].shape[-1] == 3:
+                img = tf.keras.preprocessing.image.array_to_img(display_list[i_img])
                 if nrows > 1:
                     if labels_list is not None:
                         axes[i, j].set_title(labels_list[i_img])
-                    axes[i, j].imshow(tf.keras.preprocessing.image.array_to_img(display_list[i_img]))
+                    axes[i, j].imshow(img, cmap='Greys_r')
                 else:
                     if labels_list is not None:
                         axes[i_img].set_title(labels_list[i_img])
-                    axes[i_img].imshow(tf.keras.preprocessing.image.array_to_img(display_list[i_img]))
+                    axes[i_img].imshow(img, cmap='Greys_r')
         else:
+                img = display_list[i_img]
                 if nrows > 1:
                     if labels_list is not None:
                         axes[i, j].set_title(labels_list[i_img])
-                    axes[i, j].imshow(display_list[i_img])
+                    axes[i, j].imshow(img, cmap='Greys_r')
                 else:
                     if labels_list is not None:
                         axes[i_img].set_title(labels_list[i_img])
-                    axes[i_img].imshow(display_list[i_img])
+                    axes[i_img].imshow(img, cmap='Greys_r')
     # Hide x labels and tick labels for top plots and y ticks for right plots.
     for axes in axes.flat:
         axes.label_outer()
@@ -1017,7 +1052,7 @@ def main():
             # BUG
             raise ValueError('BUG: Model of network not supported.')
 
-
+    if action == ACTION_TRAIN or action == ACTION_PREDICT or action == ACTION_EVALUATE or action == ACTION_SUMMARY:
         if init_weights_fname is not None:
             print("Initializing network weights from file " + init_weights_fname)
             model.load_weights(init_weights_fname, by_name=False)
@@ -1030,9 +1065,9 @@ def main():
         # IoU = tf.keras.metrics.IoU(num_classes=2, target_class_ids=[0], name ='IoU')
         # meanIoU = tf.keras.metrics.MeanIoU(num_classes=2)
         # F1Score = tfa.metrics.F1Score(num_classes=3, threshold=0.5)
-        metrics = ['sparse_categorical_accuracy', dice_target_class]
+        metrics = ['sparse_categorical_accuracy', dice_multiclass]
         print("Compiling the network model...")
-        model.compile(optimizer=optimizer, loss=loss, metrics=metrics, run_eagerly=True) 
+        model.compile(optimizer=optimizer, loss=loss, metrics=metrics) 
 
     if args.action == ACTION_TRAIN:
         if weights_fname is None:
