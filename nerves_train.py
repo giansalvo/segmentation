@@ -29,7 +29,7 @@ from numpy import asarray
 
 # for bulding and running deep learning model
 import tensorflow as tf
-from main import EPOCHS
+#from main import EPOCHS
 from tensorflow.keras.layers import Input
 from tensorflow.keras.layers import Conv2D
 from tensorflow.keras.layers import MaxPooling2D
@@ -42,12 +42,42 @@ from sklearn.model_selection import train_test_split
 
 from unet2 import create_model_UNet2
 
-path1 = './ultrasound-nerve-segmentation/train/'
-path2 = './ultrasound-nerve-segmentation/test/'
+path1 = './ultrasound-nerve-segmentation_orig/train/'
+path2 = './ultrasound-nerve-segmentation_orig/test/'
 check = False
 N_EPOCHS = 20
 N_BATCH_SIZE = 64
 
+tf.config.run_functions_eagerly(True) # giansalvo for dice_multiclass
+
+def dice_multiclass(y_true, y_pred, epsilon=1e-5):
+    """
+    Dice = (2*|X & Y|)/ (|X| + |Y|)
+    """
+    N_CLASSES = 3
+    y_pred = tf.argmax(y_pred, -1)
+    y_pred = tf.cast(y_pred, tf.uint8)
+    y_pred = tf.squeeze(y_pred)
+
+    # compute intermediate tensor for ground truth
+    y_true = tf.cast(y_true, tf.uint8)
+    y_true = tf.squeeze(y_true)
+
+    dice = 0
+    for i in range(N_CLASSES):
+        pred_i = tf.cast(tf.equal(y_pred, i), tf.uint32) # subset of prediction for i class
+        true_i = tf.cast(tf.equal(y_true, i), tf.uint32) # subset of mask for i class
+        # temp = tf.equal(X, Y) # intersection of X and Y (boolean values)
+        # temp = tf.cast(temp, tf.uint32)        # convert to 0/1
+        inters_i = tf.keras.backend.eval(tf.reduce_sum(pred_i*true_i))
+        union_i = tf.keras.backend.eval(tf.reduce_sum(pred_i)+tf.reduce_sum(true_i))
+
+        #tf.print("\n"+str(i)+" " +str(inters_i)+" "+str(union_i))
+        dice += (2. * inters_i + epsilon) / (union_i + epsilon)
+    dice = dice / N_CLASSES
+
+    # tf.print(str(pred_i*true_i))
+    return dice
 
 def LoadData (path1):
     # Read the images folder like a list
@@ -283,11 +313,30 @@ unet = UNetCompiled(input_size=(128,128,3), n_filters=32, n_classes=2)
 # There are multiple optimizers, loss functions and metrics that can be used to compile multi-class segmentation models
 # Ideally, try different options to get the best accuracy
 unet.compile(optimizer=tf.keras.optimizers.Adam(), 
-             loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
-              metrics=['accuracy'])
+            loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+            metrics = ['sparse_categorical_accuracy', dice_multiclass])
+
+tensorboard_callback = tf.keras.callbacks.TensorBoard("logs_nerves", histogram_freq=1)
+callbacks = [
+    # to collect some useful metrics and visualize them in tensorboard
+    tensorboard_callback,
+    # if no accuracy improvements we can stop the training directly
+    tf.keras.callbacks.EarlyStopping(patience=10, verbose=1),
+    # to save checkpoints
+    tf.keras.callbacks.ModelCheckpoint("unet_nerves_orig.h5",
+                                    verbose=1,
+                                    save_best_only=True,
+                                    save_weights_only=False)
+]
+
 
 # Run the model in a mini-batch fashion and compute the progress for each epoch
-results = unet.fit(X_train, y_train, batch_size=N_BATCH_SIZE, epochs=N_EPOCHS, validation_data=(X_valid, y_valid))
+results = unet.fit(X_train, 
+                    y_train, 
+                    batch_size = N_BATCH_SIZE, 
+                    epochs = N_EPOCHS, 
+                    validation_data = (X_valid, y_valid),
+                    callbacks = callbacks)
 training_end = datetime.datetime.now().replace(microsecond=0)
 
 # Save performances to file
