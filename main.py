@@ -61,6 +61,10 @@ from unet2 import create_model_UNet2
 from unet3 import create_model_UNet3
 from unet_us import create_model_UNet_US
 
+# this should remove the warning about abs function not available
+import absl.logging
+absl.logging.set_verbosity(absl.logging.ERROR)
+
 # CONSTANTS
 ACTION_SPLIT = "split"
 ACTION_TRAIN = "train"
@@ -100,7 +104,7 @@ DEFAULT_LOGS_DIR = "logs"
 BUFFER_SIZE = 1000
 PATIENCE = 8
 EPOCHS = 80
-SEED = 1974       # this allows to generate the same random numbers
+SEED = 42       # this allows to generate the same random numbers
 IMG_SIZE = 128  # Image size that we are going to use
 N_CHANNELS = 3  # Our images are RGB (3 channels)
 N_CLASSES = 3   # Scene Parsing has 150 classes + `not labeled` (151)
@@ -333,6 +337,45 @@ def dice_multiclass(y_true, y_pred, epsilon=1e-5):
 
     # tf.print(str(pred_i*true_i))
     return dice
+
+
+@tf.function
+def dice_differentiable(y_true, y_pred, epsilon=1e-5):
+    """
+    Dice = (2*|X & Y|)/ (|X| + |Y|)
+    """
+    def loop_body(i, y_true, y_pred, dice):
+        pred_i = tf.cast(tf.equal(y_pred, i), tf.uint32) # subset of prediction for i class
+        true_i = tf.cast(tf.equal(y_true, i), tf.uint32) # subset of mask for i class
+        inters_i = tf.cast(tf.reduce_sum(pred_i*true_i), tf.float32)
+        union_i = tf.cast(tf.reduce_sum(pred_i)+tf.reduce_sum(true_i), tf.float32)
+
+        #tf.print("\n"+str(i)+" " +str(inters_i)+" "+str(union_i))
+        dice += (tf.constant(2.) * inters_i + epsilon) / (union_i + epsilon)
+        return  [i + 1, y_true, y_pred, dice]
+
+    def loop_cond(i, y_true, y_pred, dice):
+        return i < N_CLASSES
+
+    y_pred = tf.argmax(y_pred, -1)
+    y_pred = tf.cast(y_pred, tf.uint32)
+    y_pred = tf.squeeze(y_pred)
+
+    # compute intermediate tensor for ground truth
+    y_true = tf.cast(y_true, tf.uint32)
+    y_true = tf.squeeze(y_true)
+
+    dice = 0
+    i = 0
+    _, _, _, dice = tf.while_loop(loop_cond, loop_body, [i, y_true, y_pred, dice])
+    dice = dice / N_CLASSES
+
+    return dice       
+
+
+def dice_loss(y_true, y_pred, epsilon=1e-5):
+    return 1 - dice_differentiable(y_true, y_pred)
+
 
 
 """
@@ -926,7 +969,7 @@ def main():
         epilog = "Examples:\n"
                 "       Prepare the dataset directories hierarchy starting from images/annotations initial directories:\n"
                 "         $python %(prog)s split -ir initial_root_dir -dr dataset_root_dir\n"
-                "         $python %(prog)s split -ir initial_root_dir -dr dataset_root_dir -s 0.8 0.15 0.05\n"
+                "         $python %(prog)s split -ir initial_root_dir -dr dataset_root_dir -s 0.7 0.1 0.2\n"
                 "\n"
                 "       Print the summary of the network model and save the model to disk:\n"
                 "         $python %(prog)s summary -m deeplabv3plus\n"
@@ -961,7 +1004,7 @@ def main():
     parser.add_argument("-i", "--input_image", required=False, help="The input file to be segmented.")
     parser.add_argument("-o", "--output_file", required=False, help="The output file with the segmented image.")
     parser.add_argument("-s", "--split_percentage", nargs=3, metavar=('train_p', 'validation_p', 'test_p' ),
-                        type=float, default=[0.8, 0.15, 0.05],
+                        type=float, default=[0.70, 0.10, 0.20],
                         help="The percentage of images to be copied respectively to train/validation/test set.")
     parser.add_argument("-e", "--epochs", required=False, default=EPOCHS, type=int, help="The number of times that the entire dataset is passed forward and backward through the network during the training")
     parser.add_argument("-b", "--batch_size", required=False, default=BATCH_SIZE, type=int, help="the number of samples that are passed to the network at once during the training")
@@ -1065,7 +1108,7 @@ def main():
         # IoU = tf.keras.metrics.IoU(num_classes=2, target_class_ids=[0], name ='IoU')
         # meanIoU = tf.keras.metrics.MeanIoU(num_classes=2)
         # F1Score = tfa.metrics.F1Score(num_classes=3, threshold=0.5)
-        metrics = ['sparse_categorical_accuracy', dice_multiclass]
+        metrics = ['sparse_categorical_accuracy', dice_multiclass, dice_differentiable]
         print("Compiling the network model...")
         model.compile(optimizer=optimizer, loss=loss, metrics=metrics) 
 
@@ -1123,13 +1166,14 @@ def main():
                 dice_coeffs.append(scores[2])
 
             print("Compute dice and save to file " + fn_perf)
+            print("\ndice:" + str(dice_coeffs), file=open(fn_perf, 'a'))
             dice_avg = np.mean(np.array(dice_coeffs))
-            dice_std = np.std(np.array(dice_coeffs))
-            print("Dice on target class: average {:.4f} +/- std {:.4f}".format(dice_avg,dice_std), file=open(fn_perf, 'a'))
+            dice_std = np.std(np.array(dice_coeffs), ddof=1)
+            print("\nDice: average {:.4f} +/- std {:.4f}".format(dice_avg,dice_std), file=open(fn_perf, 'a'))
         else:
             weights_fname = fn + fext
-            fn_pred = "pred_" + fn + "_" + timestamp + ".png"
-            fn_perf = "perf_" + fn + "_" + timestamp + ".txt"
+            fn_pred = "pred_" + fn + ".png"
+            fn_perf = "perf_" + fn + ".txt"
 
             model_history = train_network(training_files_list, validation_files_list, epochs, batch_size, weights_fname, timestamp, fn_pred)
 
@@ -1153,6 +1197,7 @@ def main():
         output_fname = fn + "_segm" + fext
         out_3map_fname = fn + "_3map" + fext
         out_cmap_fname = fn + "_cmap.png"
+        wfn, wfext = os.path.splitext(os.path.basename(weights_fname))
         logger.debug("output_fname=" + output_fname)
 
         if network_structure_path is not None:
@@ -1192,7 +1237,7 @@ def main():
             if not os.path.exists(truth_path):
                 truth_path = os.path.join(os.path.dirname(input_fname), "..", "..", DATASET_ANNOT_SUBDIR, DATASET_TEST_SUBDIR, fn + ".png")
         
-        fout = "pred_" + fn + ".jpg"
+        fout = "pred_" + wfn + "_" + fn + ".jpg"
         if os.path.exists(truth_path):
             logger.debug("Displaying ground truth image found here: {}".format(str(truth_path)))
             truth = read_image(truth_path)
