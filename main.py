@@ -201,13 +201,13 @@ def normalize(input_image: tf.Tensor, input_mask: tf.Tensor) -> tuple:
 class Augment(tf.keras.layers.Layer):
   def __init__(self, seed=SEED):
     super().__init__()
-    self.augment_inputs = tf.image.flip_left_right
-    self.augment_labels = tf.image.flip_left_right
-
+    # both use the same seed, so they'll make the same random changes.
+    self.augment_inputs = tf.keras.layers.RandomFlip(mode="horizontal", seed=seed)
+    self.augment_labels = tf.keras.layers.RandomFlip(mode="horizontal", seed=seed)
+  
   def call(self, inputs, labels):
-    if tf.random.uniform(()) > 0.5:
-        inputs = self.augment_inputs(inputs)
-        labels = self.augment_labels(labels)
+    inputs = self.augment_inputs(inputs)
+    labels = self.augment_labels(labels)
     # apply rotation: 50% no rotation; 25% rotation right; 25% rotation left
     # rot = tf.random.uniform(())
     # if rot < 1./4:
@@ -339,6 +339,35 @@ def dice_multiclass(y_true, y_pred, epsilon=1e-5):
     return dice
 
 
+# tf.count_nonzero
+# tf.gather
+# TP = tf.count_nonzero(actual, predicted)
+
+
+# # THIS IS DIFFERENTIABLE BUT FAKE
+# def loss_gians(y_true, y_pred):
+#     custom_loss = tf.reduce_sum(y_pred[0] - y_true)
+#     return custom_loss
+
+
+# # THIS IS DIFFERENTIABLE BUT FAKE
+# def focal_loss(y_true, y_pred):
+#     pt_1 = tf.where(tf.equal(y_true, 1), y_pred, tf.ones_like(y_pred[0]))
+#     pt_0 = tf.where(tf.equal(y_true, 0), y_pred, tf.zeros_like(y_pred[0]))
+#     custom_loss=((pt_1-pt_0)/10)
+#     return custom_loss
+
+
+# def DiceLoss(y_true, y_pred, smooth=1e-6, gama=2):
+#     # y_pred = tf.argmax(y_pred, -1)
+#     y_true, y_pred = tf.cast(y_true, dtype=tf.float32), tf.cast(y_pred, tf.float32)
+#     nominator = 2 * tf.reduce_sum(tf.multiply(y_pred, y_true)) + smooth
+#     denominator = tf.reduce_sum(y_pred ** gama) + tf.reduce_sum(y_true ** gama) + smooth
+#     result = 1 - tf.divide(nominator, denominator)
+#     return result
+
+
+
 @tf.function
 def dice_differentiable(y_true, y_pred, epsilon=1e-5):
     """
@@ -374,7 +403,7 @@ def dice_differentiable(y_true, y_pred, epsilon=1e-5):
 
 
 def dice_loss(y_true, y_pred, epsilon=1e-5):
-    return 1 - dice_differentiable(y_true, y_pred)
+    return 1 - dice_differentiable(y_true, y_pred[0])
 
 
 
@@ -873,6 +902,7 @@ def train_network(train_files, val_files, epochs, batch_size, weights_fname, tim
     else:
         plt.close()
 
+    model.save_weights(weights_fname)
     # Reload best weights
     if os.path.exists(weights_fname):
         model.load_weights(weights_fname)
@@ -896,24 +926,6 @@ def summary_short(model):
     non_trainable_count = count_params(model.non_trainable_weights)      
     logger.debug("Trainable weights={:,d}, Non trainable weights={:,d}".format(trainable_count, non_trainable_count))
 
-
-# def set_model_trainable_stauts(model, value):
-#     for layer in model.layers:
-#         layer.trainable = value
-
-
-# def save_model_trainable_status(model):
-#     temp_layers = []
-#     for layer in model.layers:
-#         temp_layers.append(layer.trainable)
-#     return temp_layers
-
-
-# def restore_model_trainable_status(model, status):
-#     i = 0
-#     for layer in model.layers:
-#         layer.trainable = status[i]
-#         i += 1
 
 #########################
 # MAIN STARTS HERE
