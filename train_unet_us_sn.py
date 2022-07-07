@@ -212,6 +212,35 @@ def load_image(datapoint: dict) -> tuple:
     return input_image, input_mask
 
 
+def dice_multiclass(y_true, y_pred, epsilon=1e-5):
+    """
+    Dice = (2*|X & Y|)/ (|X| + |Y|)
+    """
+    y_pred = tf.argmax(y_pred, -1)
+    y_pred = tf.cast(y_pred, tf.uint8)
+    y_pred = tf.squeeze(y_pred)
+
+    # compute intermediate tensor for ground truth
+    y_true = tf.cast(y_true, tf.uint8)
+    y_true = tf.squeeze(y_true)
+
+    dice = 0
+    for i in range(N_CLASSES):
+        pred_i = tf.cast(tf.equal(y_pred, i), tf.uint32) # subset of prediction for i class
+        true_i = tf.cast(tf.equal(y_true, i), tf.uint32) # subset of mask for i class
+        # temp = tf.equal(X, Y) # intersection of X and Y (boolean values)
+        # temp = tf.cast(temp, tf.uint32)        # convert to 0/1
+        inters_i = tf.keras.backend.eval(tf.reduce_sum(pred_i*true_i))
+        union_i = tf.keras.backend.eval(tf.reduce_sum(pred_i)+tf.reduce_sum(true_i))
+
+        #tf.print("\n"+str(i)+" " +str(inters_i)+" "+str(union_i))
+        dice += (2. * inters_i + epsilon) / (union_i + epsilon)
+    dice = dice / N_CLASSES
+
+    # tf.print(str(pred_i*true_i))
+    return dice
+
+
 # Dice coeff (F1 score)
 # https://gist.github.com/wassname/7793e2058c5c9dacb5212c0ac0b18a8a
 def dice_coef(y_true, y_pred, epsilon=1e-6):
@@ -570,6 +599,7 @@ def main():
     # manual_variable_initialization(True)    # avoid that Tf/keras automatic initializazion
     seed(SEED)                              # initialize numpy random generator
     tf.random.set_seed(SEED)                # initialize Tensorflow random generator
+    tf.config.run_functions_eagerly(True)
 
     # create logger
     logger = logging.getLogger('gians')
@@ -670,15 +700,15 @@ def main():
     # model_sn_output_h5 = "model_unet_us_sn_output.h5"
 
     print("Loading network/weights from file " + model_nerves_input)
-    model = tf.keras.models.load_model(model_nerves_input, custom_objects={'dice_coef': dice_coef})
-    # model.load_weights(model_nerves_input_in_h5)
+    # model = tf.keras.models.load_model(model_nerves_input, custom_objects={'dice_coef': dice_coef})
+    model.load_weights(model_nerves_input_in_h5)
     summary_short(model)
 
     # optimizer=tfa.optimizers.RectifiedAdam(lr=1e-3)
     # optimizer = tf.keras.optimizers.Adam(learning_rate=learn_rate)
     optimizer = tf.keras.optimizers.Adam(learning_rate=learn_rate)
     loss = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
-    metrics = ['sparse_categorical_accuracy', dice_coef]
+    metrics = ['sparse_categorical_accuracy', dice_multiclass]
     model.compile(optimizer=optimizer, loss=loss, metrics=metrics)
     
     dataset_images_path =  os.path.join(dataset_root_dir, DATASET_IMG_SUBDIR)
