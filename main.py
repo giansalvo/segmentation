@@ -332,7 +332,7 @@ def dice_multiclass(y_true, y_pred, epsilon=1e-5):
         union_i = tf.keras.backend.eval(tf.reduce_sum(pred_i)+tf.reduce_sum(true_i))
 
         #tf.print("\n"+str(i)+" " +str(inters_i)+" "+str(union_i))
-        dice += (2. * inters_i + epsilon) / (union_i + epsilon)
+        dice += 2. * (inters_i + epsilon) / (union_i + epsilon)
     dice = dice / N_CLASSES
 
     # tf.print(str(pred_i*true_i))
@@ -369,18 +369,24 @@ def dice_multiclass(y_true, y_pred, epsilon=1e-5):
 
 
 @tf.function
-def dice_differentiable(y_true, y_pred, epsilon=1e-5):
+def dice_multiclass2(y_true, y_pred, epsilon=1e-5):
     """
     Dice = (2*|X & Y|)/ (|X| + |Y|)
     """
     def loop_body(i, y_true, y_pred, dice):
-        pred_i = tf.cast(tf.equal(y_pred, i), tf.uint32) # subset of prediction for i class
-        true_i = tf.cast(tf.equal(y_true, i), tf.uint32) # subset of mask for i class
+        x = tf.cast(i, tf.uint32)
+        pred_i = tf.cast(tf.equal(y_pred, x), tf.uint32) # subset of prediction for i class
+        true_i = tf.cast(tf.equal(y_true, x), tf.uint32) # subset of mask for i class
         inters_i = tf.cast(tf.reduce_sum(pred_i*true_i), tf.float32)
         union_i = tf.cast(tf.reduce_sum(pred_i)+tf.reduce_sum(true_i), tf.float32)
 
         #tf.print("\n"+str(i)+" " +str(inters_i)+" "+str(union_i))
-        dice += (tf.constant(2.) * inters_i + epsilon) / (union_i + epsilon)
+        numerator = tf.math.add(inters_i, epsilon)
+        numerator = tf.multiply(tf.constant(2.), numerator)
+        denominator = tf.math.add(union_i, epsilon)
+        dice_i = tf.math.divide(numerator, denominator)
+        dice = tf.math.add(dice, dice_i)
+        # dice += (tf.constant(2.) * inters_i + epsilon) / (union_i + epsilon)
         return  [i + 1, y_true, y_pred, dice]
 
     def loop_cond(i, y_true, y_pred, dice):
@@ -394,7 +400,7 @@ def dice_differentiable(y_true, y_pred, epsilon=1e-5):
     y_true = tf.cast(y_true, tf.uint32)
     y_true = tf.squeeze(y_true)
 
-    dice = 0
+    dice = 0.0
     i = 0
     _, _, _, dice = tf.while_loop(loop_cond, loop_body, [i, y_true, y_pred, dice])
     dice = dice / N_CLASSES
@@ -794,7 +800,7 @@ def do_evaluate(dataset_root_dir, batch_size, perf_file):
     return results
                           
 
-def train_network(train_files, val_files, epochs, batch_size, weights_fname, timestamp, fn_pred):
+def train_network(train_files, val_files, epochs, batch_size, weights_fname, timestamp, fn_pred, fn_perf):
     global sample_image
     global sample_mask
 
@@ -869,7 +875,6 @@ def train_network(train_files, val_files, epochs, batch_size, weights_fname, tim
     logger.info("Network training end.")
         
     # Save performances to file
-    fn_perf = "perf_" + fn + ".txt"
     print("Saving performances to file..." + fn_perf)
     # Save invocation command line
     print("Invocation command: ", end="", file=open(fn_perf, 'a'))
@@ -946,8 +951,8 @@ def main():
     seed(SEED)                              # initialize numpy random generator
     tf.random.set_seed(SEED)                # initialize Tensorflow random generator
 
-    # DON'T TOUCHE THIS! thie code must run in eagerly mode otherwise custom metrics (i.e. multiclass_accuracy and otherrs) won't work!!
-    tf.config.run_functions_eagerly(True)
+    # Some part of the code must run in eagerly mode: i.e. multiclass_accuracy
+    # tf.config.run_functions_eagerly(True)
 
     # create logger
     logger = logging.getLogger('gians')
@@ -1112,15 +1117,13 @@ def main():
             print("Initializing network weights from file " + init_weights_fname)
             model.load_weights(init_weights_fname, by_name=False)
 
-        summary_short(model)
-
         # optimizer=tfa.optimizers.RectifiedAdam(lr=1e-3)
         optimizer = tf.keras.optimizers.Adam(learning_rate=learn_rate)
         loss = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
         # IoU = tf.keras.metrics.IoU(num_classes=2, target_class_ids=[0], name ='IoU')
         # meanIoU = tf.keras.metrics.MeanIoU(num_classes=2)
         # F1Score = tfa.metrics.F1Score(num_classes=3, threshold=0.5)
-        metrics = ['sparse_categorical_accuracy', dice_multiclass, dice_differentiable]
+        metrics = ['sparse_categorical_accuracy', dice_multiclass2]
         print("Compiling the network model...")
         model.compile(optimizer=optimizer, loss=loss, metrics=metrics) 
 
@@ -1147,7 +1150,7 @@ def main():
         
         timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
         fn, fext = os.path.splitext(os.path.basename(weights_fname))
-        fn_perf = "perf_" + fn + "_" + timestamp + ".txt"
+        fn_perf = "perf_" + fn + ".txt"
         
         if kfold_num > 0:
             files_list = training_files_list + validation_files_list
@@ -1159,6 +1162,7 @@ def main():
          
             for k, (train_index, test_index) in enumerate(kf.split(files_list)):
                 print ("Fold n.{}".format(k))
+                print ("\nFold n.{}".format(k), file=open(fn_perf, 'a'), flush=True)
                 tstamp = timestamp + "_k" + str(k)
                 train_files = [files_list[i] for i in train_index]
                 val_files = [files_list[i] for i in test_index]
@@ -1166,33 +1170,34 @@ def main():
 
                 weights_fname = fn + "_k_" + str(k) + fext
                 fn_pred = "pred_" + fn + "_" + tstamp + ".png"
+                fn_perf = "perf_" + fn + ".txt"
                 
                 model.load_weights(TEMP_WEIGHTS_FILE)
-                model_history = train_network(train_files, val_files, epochs, batch_size, weights_fname, tstamp, fn_pred)
+                model_history = train_network(train_files, val_files, epochs, batch_size, 
+                                                weights_fname, tstamp, fn_pred, fn_perf)
 
                  # Evaluate model on test set (best weights have been loaded in train_network!)
                 print("Evaluating model on test set...")
                 
                 scores = do_evaluate(dataset_root_dir=dataset_root_dir, batch_size=batch_size, perf_file=fn_perf)
-                print(str(scores[2]))
                 dice_coeffs.append(scores[2])
 
             print("Compute dice and save to file " + fn_perf)
-            print("\ndice:" + str(dice_coeffs), file=open(fn_perf, 'a'))
+            print("\ndice:" + str(dice_coeffs), file=open(fn_perf, 'a'), flush=True)
             dice_avg = np.mean(np.array(dice_coeffs))
             dice_std = np.std(np.array(dice_coeffs), ddof=1)
-            print("\nDice: average {:.4f} +/- std {:.4f}".format(dice_avg,dice_std), file=open(fn_perf, 'a'))
+            print("\nDice: average {:.4f} +/- std {:.4f}".format(dice_avg,dice_std), file=open(fn_perf, 'a'), flush=True)
         else:
             weights_fname = fn + fext
             fn_pred = "pred_" + fn + ".png"
             fn_perf = "perf_" + fn + ".txt"
 
-            model_history = train_network(training_files_list, validation_files_list, epochs, batch_size, weights_fname, timestamp, fn_pred)
+            model_history = train_network(training_files_list, validation_files_list, epochs, batch_size, 
+                                            weights_fname, timestamp, fn_pred, fn_perf)
 
             # Evaluate model on test set (best weights have been loaded in train_network fucntion!)
             print("Evaluating model on test set...")
             scores = do_evaluate(dataset_root_dir=dataset_root_dir, batch_size=batch_size, perf_file=fn_perf)
-            print(str(scores[2]))
 
     elif args.action == ACTION_PREDICT:
         if args.input_image is None:
@@ -1264,6 +1269,7 @@ def main():
         # import graphviz
         tf.keras.utils.plot_model(model, to_file='model_summary.png', show_shapes=True, show_layer_names=True) #  TODO BUG graphical image doesn't get displayed
         model.summary()
+        summary_short(model)
         print("Model metrics names: " + str(model.metrics_names))
         if network_structure_path is not None:
             print ("Save network model to: " + str(network_structure_path))
