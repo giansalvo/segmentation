@@ -252,6 +252,18 @@ def create_model_dummy(input_size=(128, 128, 3), classes=150, transfer_learning=
     model = tf.keras.Model(inputs=inputs, outputs=output, name="dummy_net")
     return model
 
+# loss function that should solve imbalance problems
+def weighted_categorical_crossentropy( weights ):
+    # weights = [ 0.6, 0.9, 98.4 ]
+    def wcce( y_true, y_pred ):
+        tf_weights = tf.constant( weights )
+        if not tf.is_tensor( y_pred ):
+            y_pred = tf.constant( y_pred )
+
+        y_true = tf.cast( y_true, y_pred.dtype )
+        return tf.keras.losses.categorical_crossentropy( y_true, y_pred ) * tf.experimental.numpy.sum( y_true * tf_weights, axis = -1 )
+    return wcce
+
 
 # Dice coeff (F1 score)
 # https://gist.github.com/wassname/7793e2058c5c9dacb5212c0ac0b18a8a
@@ -332,7 +344,7 @@ def dice_multiclass(y_true, y_pred, epsilon=1e-5):
         union_i = tf.keras.backend.eval(tf.reduce_sum(pred_i)+tf.reduce_sum(true_i))
 
         #tf.print("\n"+str(i)+" " +str(inters_i)+" "+str(union_i))
-        dice += 2. * (inters_i + epsilon) / (union_i + epsilon)
+        dice += (2. * inters_i + epsilon) / (union_i + epsilon)
     dice = dice / N_CLASSES
 
     # tf.print(str(pred_i*true_i))
@@ -381,8 +393,8 @@ def dice_multiclass2(y_true, y_pred, epsilon=1e-5):
         union_i = tf.cast(tf.reduce_sum(pred_i)+tf.reduce_sum(true_i), tf.float32)
 
         #tf.print("\n"+str(i)+" " +str(inters_i)+" "+str(union_i))
-        numerator = tf.math.add(inters_i, epsilon)
-        numerator = tf.multiply(tf.constant(2.), numerator)
+        numerator = tf.multiply(tf.constant(2.), inters_i)
+        numerator = tf.math.add(numerator, epsilon)
         denominator = tf.math.add(union_i, epsilon)
         dice_i = tf.math.divide(numerator, denominator)
         dice = tf.math.add(dice, dice_i)
@@ -631,6 +643,17 @@ class DisplayCallback(tf.keras.callbacks.Callback):
         if save_some_predictions:
             save_predictions(epoch=epoch)
 
+def add_sample_weights(image, label):
+  # The weights for each class, with the constraint that:
+  #     sum(class_weights) == 1.0
+  class_weights = tf.constant([0.6, 0.9, 98.4])
+  class_weights = class_weights/tf.reduce_sum(class_weights)
+
+  # Create an image of `sample_weights` by using the label at each pixel as an 
+  # index into the `class weights` .
+  sample_weights = tf.gather(class_weights, indices=tf.cast(label, tf.int32))
+
+  return image, label, sample_weights
 
 def fit_network(network_model, images_dataset, epochs, steps_per_epoch, validation_steps, log_dir, weights_fname):
 
@@ -647,8 +670,11 @@ def fit_network(network_model, images_dataset, epochs, steps_per_epoch, validati
                                         verbose=1,
                                         save_best_only=True,
                                         save_weights_only=False)
-    ]
-    model_history = network_model.fit(images_dataset['train'], 
+      ]
+
+    #                           images_dataset['train'].map(add_sample_weights), 
+    model_history = network_model.fit(
+                                images_dataset['train'],
                                 epochs=epochs,
                                 steps_per_epoch=steps_per_epoch,
                                 validation_steps=validation_steps,
@@ -1229,13 +1255,16 @@ def main():
 
         img0 = read_image(input_fname)
         img_tensor = tf.cast(img0, tf.float32) / 255.0    # normalize
+        print("img_tensor tensor shape: " + str(img_tensor.shape))
         prediction = infer(model=model, image_tensor=img_tensor)
+        print("prediction tensor shape: " + str(prediction.shape))
+        print(prediction[0][0][0])
         
         # compute trimap output and save image to disk
-        # print("Saving trimap output segmented image to file: " + out_3map_fname)
-        # img1 = tf.cast(prediction, tf.uint8)
-        # img1 = tf.image.encode_jpeg(img1)
-        # tf.io.write_file(out_3map_fname, img1)
+        print("Saving trimap output segmented image to file: " + out_3map_fname)
+        img1 = tf.cast(prediction, tf.uint8)
+        img1 = tf.image.encode_jpeg(img1)
+        tf.io.write_file(out_3map_fname, img1)
 
         # compute grayscale segmented image and save it to disk
         # print("Saving grayscale segmented image to file: " + output_fname)
