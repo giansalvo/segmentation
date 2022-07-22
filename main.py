@@ -102,10 +102,10 @@ DEFAULT_LOGS_DIR = "logs"
 # for reference about the BUFFER_SIZE in shuffle:
 # https://stackoverflow.com/questions/46444018/meaning-of-buffer-size-in-dataset-map-dataset-prefetch-and-dataset-shuffle
 BUFFER_SIZE = 1000
-PATIENCE = 8
-EPOCHS = 80
+PATIENCE = 10
+EPOCHS = 100
 SEED = 42       # this allows to generate the same random numbers
-IMG_SIZE = 128  # Image size that we are going to use
+IMG_SIZE = 256  # Image size that we are going to use
 N_CHANNELS = 3  # Our images are RGB (3 channels)
 N_CLASSES = 3   # Scene Parsing has 150 classes + `not labeled` (151)
 TARGET_CLASS = 1    # class of foreground, it will be used to compute dice coeff.
@@ -933,14 +933,14 @@ def train_network(train_files, val_files, epochs, batch_size, weights_fname, tim
     else:
         plt.close()
 
-    model.save_weights(weights_fname)
+    # model.save_weights(weights_fname)
     # Reload best weights
     if os.path.exists(weights_fname):
         model.load_weights(weights_fname)
     # Save network structure (model, weights, optimizer, ...)
-    fn_model = "model_" + fn
-    print("Saving network model and weights to file..." + fn_model)
-    model.save(fn_model)
+    # fn_model = "model_" + fn
+    # print("Saving network model and weights to file..." + fn_model)
+    # model.save(fn_model)
 
     # Save some predictions at the end of the training
     print("Saving some predictions to file...")
