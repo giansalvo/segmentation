@@ -55,6 +55,9 @@ from PIL import Image
 
 from sklearn.model_selection import KFold
 
+# https://github.com/yingkaisha/keras-unet-collection/blob/d30f14a259656d2f26ea11ed978255d6a7d0ce37/examples/user_guide_models.ipynb
+from keras_unet_collection import models
+
 from deeplab_v3_plus import create_model_deeplabv3plus
 from unet import create_model_UNet
 from unet2 import create_model_UNet2
@@ -79,6 +82,7 @@ MODEL_UNET = "unet"
 MODEL_UNET2 = "unet2"
 MODEL_UNET3 = "unet3"
 MODEL_UNET_US = "unet_us"
+MODEL_TRANSUNET = "transunet"
 MODEL_DEEPLABV3PLUS = "deeplabv3plus"   # DEPRECATED
 MODEL_DEEPLABV3PLUS_XCEPTION = "deeplabv3plus_xception"
 MODEL_DEEPLABV3PLUS_MOBILENETV2 = "deeplabv3plus_mobilenetv2"
@@ -105,7 +109,7 @@ BUFFER_SIZE = 1000
 PATIENCE = 10
 EPOCHS = 100
 SEED = 42       # this allows to generate the same random numbers
-IMG_SIZE = 256  # Image size that we are going to use
+IMG_SIZE = 128  # Image size that we are going to use
 N_CHANNELS = 3  # Our images are RGB (3 channels)
 N_CLASSES = 3   # Scene Parsing has 150 classes + `not labeled` (151)
 TARGET_CLASS = 1    # class of foreground, it will be used to compute dice coeff.
@@ -672,6 +676,12 @@ def fit_network(network_model, images_dataset, epochs, steps_per_epoch, validati
                                         save_weights_only=False)
       ]
 
+    # callbacks = [
+    #     tensorboard_callback,
+    #     # if no accuracy improvements we can stop the training directly
+    #     tf.keras.callbacks.EarlyStopping(patience=PATIENCE, verbose=1),
+    # ]
+
     #                           images_dataset['train'].map(add_sample_weights), 
     model_history = network_model.fit(
                                 images_dataset['train'],
@@ -1052,7 +1062,7 @@ def main():
     parser.add_argument("-e", "--epochs", required=False, default=EPOCHS, type=int, help="The number of times that the entire dataset is passed forward and backward through the network during the training")
     parser.add_argument("-b", "--batch_size", required=False, default=BATCH_SIZE, type=int, help="the number of samples that are passed to the network at once during the training")
     parser.add_argument('-m', "--model", required=False,
-                        choices=(MODEL_DUMMY, MODEL_UNET, MODEL_UNET2, MODEL_UNET3, MODEL_UNET_US, MODEL_DEEPLABV3PLUS, MODEL_DEEPLABV3PLUS_XCEPTION, MODEL_DEEPLABV3PLUS_MOBILENETV2), 
+                        choices=(MODEL_DUMMY, MODEL_UNET, MODEL_UNET2, MODEL_UNET3, MODEL_UNET_US, MODEL_TRANSUNET, MODEL_DEEPLABV3PLUS, MODEL_DEEPLABV3PLUS_XCEPTION, MODEL_DEEPLABV3PLUS_MOBILENETV2), 
                         help="The model of network to be created/used. It must be compatible with the weigths file.")
     parser.add_argument("-l", "--logs_dir", required=False, default=DEFAULT_LOGS_DIR, 
                         help="The directory where training information will be added. If it doesn't exist it will be created.")
@@ -1120,6 +1130,17 @@ def main():
             model = create_model_UNet3(input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel, transfer_learning=transfer_learning)
         elif network_model == MODEL_UNET_US:
             model = create_model_UNet_US(input_size=(IMG_SIZE, IMG_SIZE, N_CHANNELS), n_classes=classes_for_pixel, transfer_learning=transfer_learning)
+        elif network_model == MODEL_TRANSUNET:
+            # model =   models.transunet_2d((IMG_SIZE, IMG_SIZE, 3), filter_num=[16, 32, 64, 128], n_labels=12, 
+            #                     stack_num_down=2, stack_num_up=2,
+            #                     embed_dim=768, num_mlp=3072, num_heads=12, num_transformer=12,
+            #                     activation='ReLU', mlp_activation='GELU', output_activation='Softmax', 
+            #                     batch_norm=True, pool=True, unpool='bilinear', name='transunet')
+            model =   models.transunet_2d((IMG_SIZE, IMG_SIZE, 3), filter_num=[IMG_SIZE//8, IMG_SIZE//4, IMG_SIZE//2, IMG_SIZE], n_labels=12, 
+                                stack_num_down=2, stack_num_up=2,
+                                embed_dim=96, num_mlp=384, num_heads=12, num_transformer=12,
+                                activation='ReLU', mlp_activation='GELU', output_activation='Softmax', 
+                                batch_norm=True, pool=True, unpool='bilinear', name='transunet')
         elif network_model == MODEL_DEEPLABV3PLUS_XCEPTION or network_model == MODEL_DEEPLABV3PLUS:
             if transfer_learning == TRANSF_LEARN_PASCAL_VOC:
                 model = create_model_deeplabv3plus(weights='pascal_voc', backbone='xception', input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel)
