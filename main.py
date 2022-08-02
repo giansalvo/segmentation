@@ -1347,6 +1347,28 @@ def main():
             print("ERROR: network_structure_path or weights_fname argument must be provided.")
             exit(1)
 
+        print("Creating output directory structure...")
+        os.mkdir(PREDICT_COMPARISON_DIR)
+        # IMAGES SUBDIRS
+        temp = os.path.join(PREDICT_COMPARISON_DIR, DATASET_TRAIN_SUBDIR)
+        os.mkdir(temp)
+        temp = os.path.join(PREDICT_COMPARISON_DIR, DATASET_VAL_SUBDIR)
+        os.mkdir(temp)
+        temp = os.path.join(PREDICT_COMPARISON_DIR, DATASET_TEST_SUBDIR)
+        os.mkdir(temp)
+        ##
+        os.mkdir(PREDICT_IMAGES_DIR)
+        # IMAGES SUBDIRS
+        temp = os.path.join(PREDICT_IMAGES_DIR, DATASET_TRAIN_SUBDIR)
+        os.mkdir(temp)
+        temp = os.path.join(PREDICT_IMAGES_DIR, DATASET_VAL_SUBDIR)
+        os.mkdir(temp)
+        temp = os.path.join(PREDICT_IMAGES_DIR, DATASET_TEST_SUBDIR)
+        os.mkdir(temp)
+
+        # print file header
+        print("Folder; Filename; Dice\n", end="", file=open(FILE_DICE_CSV, 'a'))
+
         for input_fname in filenames:
             if not input_fname.endswith(".jpg"):
                 break
@@ -1369,15 +1391,20 @@ def main():
             predictions = model.predict(img)
             visual_pred = create_mask(predictions)[0]
             
+            truth_path = os.path.join(os.path.dirname(input_fname), "..", "..", DATASET_ANNOT_SUBDIR, DATASET_TRAIN_SUBDIR, fn + ".png")
+            if os.path.exists(truth_path):
+                subdir = DATASET_TRAIN_SUBDIR
+            else:
+                truth_path = os.path.join(os.path.dirname(input_fname), "..", "..", DATASET_ANNOT_SUBDIR, DATASET_VAL_SUBDIR, fn + ".png")
+                if os.path.exists(truth_path):
+                    subdir = DATASET_VAL_SUBDIR
+                else:
+                    subdir = DATASET_TEST_SUBDIR
+                    truth_path = os.path.join(os.path.dirname(input_fname), "..", "..", DATASET_ANNOT_SUBDIR, DATASET_TEST_SUBDIR, fn + ".png")
             fn, fext = os.path.splitext(os.path.basename(input_fname))
             fout = fn + ".jpg"
-            fout = os.path.join(PREDICT_COMPARISON_DIR, fout)
-            truth_path = os.path.join(os.path.dirname(input_fname), "..", "..", DATASET_ANNOT_SUBDIR, DATASET_TRAIN_SUBDIR, fn + ".png")
-            if not os.path.exists(truth_path):
-                truth_path = os.path.join(os.path.dirname(input_fname), "..", "..", DATASET_ANNOT_SUBDIR, DATASET_VAL_SUBDIR, fn + ".png")
-                if not os.path.exists(truth_path):
-                    truth_path = os.path.join(os.path.dirname(input_fname), "..", "..", DATASET_ANNOT_SUBDIR, DATASET_TEST_SUBDIR, fn + ".png")
-            
+            fout = os.path.join(PREDICT_COMPARISON_DIR, subdir, fout)
+
             dice = -1
             if os.path.exists(truth_path):
                 truth = read_image(truth_path, 1)
@@ -1394,18 +1421,10 @@ def main():
             print(format(dice, ',.6f').translate(trans) + "\n", end="", file=open(FILE_DICE_CSV, 'a'))
 
             # compute grayscale segmented image and save it to disk
-            fout = os.path.join(PREDICT_IMAGES_DIR, output_fname)
+            fout = os.path.join(PREDICT_IMAGES_DIR, subdir, output_fname)
             #logger.debug("Saving grayscale segmented image to file: " + output_fname)
             jpeg = generate_greyscale_image(visual_pred)
             tf.io.write_file(fout, jpeg)
-        
-            fn, fext = os.path.splitext(os.path.basename(input_fname))
-            truth_path = os.path.join(os.path.dirname(input_fname), "..", "..", DATASET_ANNOT_SUBDIR, DATASET_TRAIN_SUBDIR, fn + ".png")
-            if not os.path.exists(truth_path):
-                truth_path = os.path.join(os.path.dirname(input_fname), "..", "..", DATASET_ANNOT_SUBDIR, DATASET_VAL_SUBDIR, fn + ".png")
-                if not os.path.exists(truth_path):
-                    truth_path = os.path.join(os.path.dirname(input_fname), "..", "..", DATASET_ANNOT_SUBDIR, DATASET_TEST_SUBDIR, fn + ".png")
-
 
     elif args.action == ACTION_SUMMARY:
         # print network's structure summary and save whole architecture plus weigths
