@@ -75,6 +75,7 @@ ACTION_PREDICT = "predict"
 ACTION_SUMMARY = "summary"
 ACTION_EVALUATE = "evaluate"
 ACTION_INSPECT = "inspect"
+ACTION_PREDICT_ALL = "predict_all"
 PNG_EXT = ".png"
 FEXT_JPEG = "*.jpg"
 MODEL_DUMMY = "dummy"
@@ -130,6 +131,9 @@ sample_mask = None
 model = None
 learn_rate = 0.001
 transfer_learning = None
+FILE_DICE_CSV = "dices.csv"
+PREDICT_IMAGES_DIR = "output1"
+PREDICT_COMPARISON_DIR = "output2"
 
 # COPYRIGHT NOTICE AND PROGRAM VERSION
 COPYRIGHT_NOTICE = "Copyright (C) 2022 Giansalvo Gusinu"
@@ -344,7 +348,8 @@ def dice_multiclass(y_true, y_pred, epsilon=1e-5):
         true_i = tf.cast(tf.equal(y_true, i), tf.uint32) # subset of mask for i class
         # temp = tf.equal(X, Y) # intersection of X and Y (boolean values)
         # temp = tf.cast(temp, tf.uint32)        # convert to 0/1
-        inters_i = tf.keras.backend.eval(tf.reduce_sum(pred_i*true_i))
+        mult = tf.multiply(pred_i, true_i)
+        inters_i = tf.keras.backend.eval(tf.reduce_sum(mult))
         union_i = tf.keras.backend.eval(tf.reduce_sum(pred_i)+tf.reduce_sum(true_i))
 
         #tf.print("\n"+str(i)+" " +str(inters_i)+" "+str(union_i))
@@ -676,12 +681,6 @@ def fit_network(network_model, images_dataset, epochs, steps_per_epoch, validati
                                         save_weights_only=False)
       ]
 
-    # callbacks = [
-    #     tensorboard_callback,
-    #     # if no accuracy improvements we can stop the training directly
-    #     tf.keras.callbacks.EarlyStopping(patience=PATIENCE, verbose=1),
-    # ]
-
     #                           images_dataset['train'].map(add_sample_weights), 
     model_history = network_model.fit(
                                 images_dataset['train'],
@@ -694,9 +693,9 @@ def fit_network(network_model, images_dataset, epochs, steps_per_epoch, validati
     return model_history
 
 
-def read_image(image_path):
+def read_image(image_path, channels=3):
     img0 = tf.io.read_file(image_path)
-    img0 = tf.image.decode_jpeg(img0, channels=3)
+    img0 = tf.image.decode_jpeg(img0, channels=channels)
     img0 = tf.image.resize(img0, [IMG_SIZE,IMG_SIZE])
     return img0
 
@@ -793,7 +792,7 @@ def plot_samples_matplotlib(display_list, labels_list=None, figsize=None, fname=
     if fname is None:
         plt.show()
     else:
-        print ("Saving prediction to file {}...".format(fname))
+        #logger.debug("Saving prediction to file {}...".format(fname))
         plt.savefig(fname)
         plt.close()
 
@@ -988,7 +987,7 @@ def main():
     tf.random.set_seed(SEED)                # initialize Tensorflow random generator
 
     # Some part of the code must run in eagerly mode: i.e. multiclass_accuracy
-    # tf.config.run_functions_eagerly(True)
+    tf.config.run_functions_eagerly(True)
 
     # create logger
     logger = logging.getLogger('gians')
@@ -1118,7 +1117,7 @@ def main():
     if network_structure_path is not None:
         print("Loading network model from " + network_structure_path)
         model = tf.keras.models.load_model(network_structure_path, custom_objects={'dice_coef': dice_coef})
-    elif action == ACTION_TRAIN or action == ACTION_PREDICT or action == ACTION_EVALUATE or action == ACTION_SUMMARY:
+    elif action == ACTION_TRAIN or action == ACTION_PREDICT or action == ACTION_PREDICT_ALL or action == ACTION_EVALUATE or action == ACTION_SUMMARY:
         print("Creating network model...")
         if network_model == MODEL_DUMMY:
             model = create_model_dummy(input_size=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel, transfer_learning=transfer_learning)
@@ -1159,7 +1158,7 @@ def main():
             # BUG
             raise ValueError('BUG: Model of network not supported.')
 
-    if action == ACTION_TRAIN or action == ACTION_PREDICT or action == ACTION_EVALUATE or action == ACTION_SUMMARY:
+    if action == ACTION_TRAIN or action == ACTION_PREDICT or action == ACTION_PREDICT_ALL or action == ACTION_EVALUATE or action == ACTION_SUMMARY:
         if init_weights_fname is not None:
             print("Initializing network weights from file " + init_weights_fname)
             model.load_weights(init_weights_fname, by_name=False)
@@ -1170,7 +1169,7 @@ def main():
         # IoU = tf.keras.metrics.IoU(num_classes=2, target_class_ids=[0], name ='IoU')
         # meanIoU = tf.keras.metrics.MeanIoU(num_classes=2)
         # F1Score = tfa.metrics.F1Score(num_classes=3, threshold=0.5)
-        metrics = ['sparse_categorical_accuracy', dice_multiclass2]
+        metrics = ['sparse_categorical_accuracy', dice_multiclass]
         print("Compiling the network model...")
         model.compile(optimizer=optimizer, loss=loss, metrics=metrics) 
 
@@ -1277,19 +1276,22 @@ def main():
         img0 = read_image(input_fname)
         img_tensor = tf.cast(img0, tf.float32) / 255.0    # normalize
         print("img_tensor tensor shape: " + str(img_tensor.shape))
-        prediction = infer(model=model, image_tensor=img_tensor)
-        print("prediction tensor shape: " + str(prediction.shape))
-        print(prediction[0][0][0])
+        #prediction = infer(model=model, image_tensor=img_tensor)
+        img = np.expand_dims(img_tensor, axis=0)
+        predictions = model.predict(img)
+        visual_pred = create_mask(predictions)[0]
+
+        print("prediction tensor shape: " + str(predictions.shape))
         
         # compute trimap output and save image to disk
         print("Saving trimap output segmented image to file: " + out_3map_fname)
-        img1 = tf.cast(prediction, tf.uint8)
+        img1 = tf.cast(visual_pred, tf.uint8)
         img1 = tf.image.encode_jpeg(img1)
         tf.io.write_file(out_3map_fname, img1)
 
         # compute grayscale segmented image and save it to disk
         # print("Saving grayscale segmented image to file: " + output_fname)
-        # jpeg = generate_greyscale_image(prediction)
+        # jpeg = generate_greyscale_image(visual_pred)
         # tf.io.write_file(output_fname, jpeg)
     
         # compute colored segmented image and save it to disk
@@ -1307,10 +1309,102 @@ def main():
         fout = "pred_" + wfn + "_" + fn + ".jpg"
         if os.path.exists(truth_path):
             logger.debug("Displaying ground truth image found here: {}".format(str(truth_path)))
-            truth = read_image(truth_path)
-            plot_samples_matplotlib([img0, truth, prediction], ["Sample", "Ground Truth", "Prediction"], fname=fout)
+            truth = read_image(truth_path, 1)
+            truth -= 1 # normalize
+
+            y_truth = tf.expand_dims(truth, axis=0)
+            y_pred = predictions
+
+            c1 = dice_multiclass(y_truth, y_pred)
+            c2 = multiclass_accuracy(y_truth, y_pred)
+            c3 = dice_target_class(y_truth, y_pred)
+            print("dice_multiclass="+str(c1))
+            print("multiclass_accuracy=" + str(c2))
+            print("dice_target_class="+ str(c3))
+
+            plot_samples_matplotlib([img0, truth, visual_pred], ["Sample", "Ground Truth", "Prediction"], fname=fout)
         else:
-            plot_samples_matplotlib([img0, prediction], ["Sample", "Prediction"], fname=fout)
+            plot_samples_matplotlib([img0, visual_pred], ["Sample", "Prediction"], fname=fout)
+            print("Ground truth image not found!")
+
+    elif args.action == ACTION_PREDICT_ALL:
+
+        dataset_images_path =  os.path.join(dataset_root_dir, DATASET_IMG_SUBDIR)
+        training_files_regexp =  os.path.join(dataset_images_path, DATASET_TRAIN_SUBDIR, FEXT_JPEG)
+        validation_files_regexp = os.path.join(dataset_images_path, DATASET_VAL_SUBDIR, FEXT_JPEG)
+        test_files_regexp = os.path.join(dataset_images_path, DATASET_TEST_SUBDIR, FEXT_JPEG)
+        filenames = glob(training_files_regexp) + glob(validation_files_regexp) + glob(test_files_regexp)
+        ntot = len(list(filenames))
+        print("Number of images found: ", ntot)
+
+        if network_structure_path is not None:
+            print("Loading network model from " + network_structure_path)
+            model = tf.keras.models.load_model(network_structure_path, custom_objects={'dice_coef': multiclass_accuracy})
+        elif weights_fname is not None:
+            print("Loading network weights from file " + weights_fname)
+            model.load_weights(weights_fname)
+        else:
+            print("ERROR: network_structure_path or weights_fname argument must be provided.")
+            exit(1)
+
+        for input_fname in filenames:
+            if not input_fname.endswith(".jpg"):
+                break
+
+            #logger.debug("input_fname=" + input_fname)
+            output_fname = input_fname
+            fn, fext = os.path.splitext(os.path.basename(output_fname))
+            output_fname = fn + fext
+            out_3map_fname = fn + "_3map" + fext
+            out_cmap_fname = fn + "_cmap.png"
+            wfn, wfext = os.path.splitext(os.path.basename(weights_fname))
+            # logger.debug("output_fname=" + output_fname)
+
+            print(os.path.split(input_fname)[0] + "; " + os.path.split(input_fname)[1] + "; ", end="", file=open(FILE_DICE_CSV, 'a'))
+
+            img0 = read_image(input_fname)
+            img_tensor = tf.cast(img0, tf.float32) / 255.0    # normalize
+            #prediction = infer(model=model, image_tensor=img_tensor)
+            img = np.expand_dims(img_tensor, axis=0)
+            predictions = model.predict(img)
+            visual_pred = create_mask(predictions)[0]
+            
+            fn, fext = os.path.splitext(os.path.basename(input_fname))
+            fout = fn + ".jpg"
+            fout = os.path.join(PREDICT_COMPARISON_DIR, fout)
+            truth_path = os.path.join(os.path.dirname(input_fname), "..", "..", DATASET_ANNOT_SUBDIR, DATASET_TRAIN_SUBDIR, fn + ".png")
+            if not os.path.exists(truth_path):
+                truth_path = os.path.join(os.path.dirname(input_fname), "..", "..", DATASET_ANNOT_SUBDIR, DATASET_VAL_SUBDIR, fn + ".png")
+                if not os.path.exists(truth_path):
+                    truth_path = os.path.join(os.path.dirname(input_fname), "..", "..", DATASET_ANNOT_SUBDIR, DATASET_TEST_SUBDIR, fn + ".png")
+            
+            dice = -1
+            if os.path.exists(truth_path):
+                truth = read_image(truth_path, 1)
+                truth -= 1 # normalize
+                y_truth = tf.expand_dims(truth, axis=0)
+                y_pred = predictions
+                dice = dice_multiclass(y_truth, y_pred)
+                #truth = read_image(truth_path)
+                plot_samples_matplotlib([img0, truth, visual_pred], ["Sample", "Ground Truth", "Prediction"], fname=fout)
+            else:
+                plot_samples_matplotlib([img0, visual_pred], ["Sample", "Prediction"], fname=fout)
+
+            trans = str.maketrans('.,', ',.')
+            print(format(dice, ',.6f').translate(trans) + "\n", end="", file=open(FILE_DICE_CSV, 'a'))
+
+            # compute grayscale segmented image and save it to disk
+            fout = os.path.join(PREDICT_IMAGES_DIR, output_fname)
+            #logger.debug("Saving grayscale segmented image to file: " + output_fname)
+            jpeg = generate_greyscale_image(visual_pred)
+            tf.io.write_file(fout, jpeg)
+        
+            fn, fext = os.path.splitext(os.path.basename(input_fname))
+            truth_path = os.path.join(os.path.dirname(input_fname), "..", "..", DATASET_ANNOT_SUBDIR, DATASET_TRAIN_SUBDIR, fn + ".png")
+            if not os.path.exists(truth_path):
+                truth_path = os.path.join(os.path.dirname(input_fname), "..", "..", DATASET_ANNOT_SUBDIR, DATASET_VAL_SUBDIR, fn + ".png")
+                if not os.path.exists(truth_path):
+                    truth_path = os.path.join(os.path.dirname(input_fname), "..", "..", DATASET_ANNOT_SUBDIR, DATASET_TEST_SUBDIR, fn + ".png")
 
 
     elif args.action == ACTION_SUMMARY:
