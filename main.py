@@ -4,7 +4,7 @@
     For more information about autotune:
     https://www.tensorflow.org/guide/data_performance#prefetching
 
-    Copyright (c) 2022 Giansalvo Gusinu <profgusinu@gmail.com>
+    Copyright (c) 2022 Giansalvo Gusinu
     Copyright (c) 2021 Emil Zakirov and others
     Copyright (c) 2020 Yann LE GUILLY
 
@@ -1135,9 +1135,9 @@ def main():
             #                     embed_dim=768, num_mlp=3072, num_heads=12, num_transformer=12,
             #                     activation='ReLU', mlp_activation='GELU', output_activation='Softmax', 
             #                     batch_norm=True, pool=True, unpool='bilinear', name='transunet')
-            model =   models.transunet_2d((IMG_SIZE, IMG_SIZE, 3), filter_num=[IMG_SIZE//8, IMG_SIZE//4, IMG_SIZE//2, IMG_SIZE], n_labels=12, 
+            model =   models.transunet_2d((IMG_SIZE, IMG_SIZE, 3), filter_num=[IMG_SIZE//8, IMG_SIZE//4, IMG_SIZE//2, IMG_SIZE], n_labels=3, 
                                 stack_num_down=2, stack_num_up=2,
-                                embed_dim=96, num_mlp=384, num_heads=12, num_transformer=12,
+                                embed_dim=96, num_mlp=384, num_heads=3, num_transformer=12,
                                 activation='ReLU', mlp_activation='GELU', output_activation='Softmax', 
                                 batch_norm=True, pool=True, unpool='bilinear', name='transunet')
         elif network_model == MODEL_DEEPLABV3PLUS_XCEPTION or network_model == MODEL_DEEPLABV3PLUS:
@@ -1407,12 +1407,17 @@ def main():
 
             dice = -1
             if os.path.exists(truth_path):
-                truth = read_image(truth_path, 1)
+                truth = tf.io.read_file(truth_path)
+                truth = tf.image.decode_png(truth, channels=1)
+                truth = tf.where(truth == 255, np.dtype('uint8').type(0), truth)
+                truth = tf.image.resize(truth, [IMG_SIZE,IMG_SIZE])
                 truth -= 1 # normalize
+
                 y_truth = tf.expand_dims(truth, axis=0)
                 y_pred = predictions
+                
                 dice = dice_multiclass(y_truth, y_pred)
-                #truth = read_image(truth_path)
+
                 plot_samples_matplotlib([img0, truth, visual_pred], ["Sample", "Ground Truth", "Prediction"], fname=fout)
             else:
                 plot_samples_matplotlib([img0, visual_pred], ["Sample", "Prediction"], fname=fout)
