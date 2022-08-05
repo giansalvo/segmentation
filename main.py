@@ -547,7 +547,7 @@ def dice_batch(Y_true, Y_pred, epsilon=1e-5):
     dice_batch = dice_batch / nbatch_size
     return dice_batch
 
-def dice_simple(y_true, y_pred, epsilon=1e-6):
+def dice_simple(y_true, y_pred):
     """
     Dice = (2*|X & Y|)/ (|X| + |Y|)
     """
@@ -561,6 +561,7 @@ def dice_simple(y_true, y_pred, epsilon=1e-6):
     y_true = tf.squeeze(y_true)
 
     dice = 0.
+    nclasses_effective = 0
     for i in range(N_CLASSES):
         pred_i = tf.cast(tf.equal(y_pred, i), tf.uint32) # subset of prediction for i class
         true_i = tf.cast(tf.equal(y_true, i), tf.uint32) # subset of mask for i class
@@ -568,12 +569,17 @@ def dice_simple(y_true, y_pred, epsilon=1e-6):
         inters_i = tf.keras.backend.eval(tf.reduce_sum(mult))
         union_i = tf.keras.backend.eval(tf.reduce_sum(pred_i)+tf.reduce_sum(true_i))
 
-        if inters_i > epsilon:
-            #tf.print("\n"+str(i)+" " +str(inters_i)+" "+str(union_i))
-            dice += (2. * inters_i) / union_i
-    dice = dice / N_CLASSES
+        if union_i > 0:
+            nclasses_effective += 1
+            if inters_i > 0:
+                #tf.print("\n"+str(i)+" " +str(inters_i)+" "+str(union_i))
+                dice += (2. * inters_i) / union_i
+    if nclasses_effective > 0:
+        dice = dice / nclasses_effective
 
-    # tf.print(str(pred_i*true_i))
+    assert dice <= 1.
+    assert dice >= 0.
+
     return dice
 
 
