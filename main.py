@@ -110,9 +110,9 @@ BUFFER_SIZE = 1000
 PATIENCE = 10
 EPOCHS = 100
 SEED = 42       # this allows to generate the same random numbers
-IMG_SIZE = 128  # Image size that we are going to use
-N_CHANNELS = 3  # Our images are RGB (3 channels)
-N_CLASSES = 3   # Scene Parsing has 150 classes + `not labeled` (151)
+img_size = 256  # Image size that we are going to use
+N_CHANNELS = 3  # Sample images are RGB (3 channels)
+N_CLASSES = 3   # foregroung; border; background
 TARGET_CLASS = 1    # class of foreground, it will be used to compute dice coeff.
 # PIXEL CLASSES BEFORE NORMALISATION
 # 1 FOREGROUND
@@ -134,6 +134,7 @@ transfer_learning = None
 FILE_DICE_CSV = "dices.csv"
 PREDICT_IMAGES_DIR = "output1"
 PREDICT_COMPARISON_DIR = "output2"
+PREDICT_MASK_DIR = "output3"
 
 # COPYRIGHT NOTICE AND PROGRAM VERSION
 COPYRIGHT_NOTICE = "Copyright (C) 2022 Giansalvo Gusinu"
@@ -248,8 +249,8 @@ def load_image(datapoint: dict) -> tuple:
     tuple
         A modified image and its annotation.
     """
-    input_image = tf.image.resize(datapoint['image'], (IMG_SIZE, IMG_SIZE))
-    input_mask = tf.image.resize(datapoint['segmentation_mask'], (IMG_SIZE, IMG_SIZE))
+    input_image = tf.image.resize(datapoint['image'], (img_size, img_size))
+    input_mask = tf.image.resize(datapoint['segmentation_mask'], (img_size, img_size))
     input_image, input_mask = normalize(input_image, input_mask)
     return input_image, input_mask
 
@@ -311,8 +312,8 @@ def multiclass_accuracy(Y_true, Y_pred):
         # the following double loop should be replaced by the followin one line instruction, but I couldn't make i work!
         sum = tf.keras.backend.eval(tf.reduce_sum(y))  # sum all elemnents and convert to scalar
         # s = 0
-        # for r in range(IMG_SIZE):
-        #     for c in range(IMG_SIZE):
+        # for r in range(img_size):
+        #     for c in range(img_size):
         #         #tf.print(y[r,c], output_stream=sys.stderr, sep=',', end='')
         #         s += tf.keras.backend.eval(y[r,c])
         #tf.print("\n", output_stream=sys.stderr)
@@ -334,6 +335,7 @@ def dice_multiclass(y_true, y_pred, epsilon=1e-5):
     """
     Dice = (2*|X & Y|)/ (|X| + |Y|)
     """
+    # tf.print("y_true.shape="+str(y_true.shape))
     y_pred = tf.argmax(y_pred, -1)
     y_pred = tf.cast(y_pred, tf.uint8)
     y_pred = tf.squeeze(y_pred)
@@ -489,14 +491,14 @@ def dice_target_class(Y_true, Y_pred, epsilon=1e-5):
         #     tf.print("intersection="+str(intersection),output_stream=sys.stderr)
         #     tf.print("union="+str(union),output_stream=sys.stderr)
         #     tf.print("y_true_target",output_stream=sys.stderr)
-        #     for r in range(IMG_SIZE):
-        #         for c in range(IMG_SIZE):
+        #     for r in range(img_size):
+        #         for c in range(img_size):
         #             tf.print(y_true_target[c,r], output_stream=sys.stderr, sep=',', end=' ')
         #         tf.print("\n",output_stream=sys.stderr, end='')
         #     tf.print("y_pred_target",output_stream=sys.stderr)
         #     s=0
-        #     for r in range(IMG_SIZE):
-        #         for c in range(IMG_SIZE):
+        #     for r in range(img_size):
+        #         for c in range(img_size):
         #             s += y_pred_target[r,c].numpy()
         #             tf.print(y_pred_target[c,r], output_stream=sys.stderr, sep=',', end=' ')
         #         tf.print("\n",output_stream=sys.stderr, end='')
@@ -509,6 +511,70 @@ def dice_target_class(Y_true, Y_pred, epsilon=1e-5):
     # compute the average accuracy for the whole batch
     dice_batch = dice_batch / nbatch_size
     return dice_batch
+
+"""
+    Dice Similarity Coeff. (DSC or F1 score)
+    Dice = (2*|X & Y|)/ (|X| + |Y|)
+
+    implementation inspired by
+    https://gist.github.com/wassname/7793e2058c5c9dacb5212c0ac0b18a8a
+
+    This function needs to run in eager mode:
+    - tf.config.run_functions_eagerly(True)
+    - compile with run_eagerly=True
+    - do not use @tf.function decorator
+"""
+def dice_batch(Y_true, Y_pred, epsilon=1e-5):
+    # tf.print("Y_true.shape="+str(Y_true.shape))
+    nbatch_size = Y_true.shape[0]
+    # tf.print("dice_batch: nbatch_size="+str(nbatch_size))
+    if nbatch_size is None:
+        return float('nan')
+    dice_batch = 0.
+    for i in range(nbatch_size):
+        # extract i-th images (sample and mask) from batch and normalize them
+        y_true = Y_true[i]
+        y_pred = Y_pred[i]
+
+        dice = dice_simple(y_true, y_pred)
+
+        assert dice <= 1.
+        assert dice >= 0.
+
+        # increment accuracy for the batch
+        dice_batch += dice
+    # compute the average accuracy for the whole batch
+    dice_batch = dice_batch / nbatch_size
+    return dice_batch
+
+def dice_simple(y_true, y_pred, epsilon=1e-6):
+    """
+    Dice = (2*|X & Y|)/ (|X| + |Y|)
+    """
+    # tf.print("dice_simple: y_true.shape="+str(y_true.shape))
+    y_pred = tf.argmax(y_pred, -1)
+    y_pred = tf.cast(y_pred, tf.uint32)
+    y_pred = tf.squeeze(y_pred)
+
+    # compute intermediate tensor for ground truth
+    y_true = tf.cast(y_true, tf.uint32)
+    y_true = tf.squeeze(y_true)
+
+    dice = 0.
+    for i in range(N_CLASSES):
+        pred_i = tf.cast(tf.equal(y_pred, i), tf.uint32) # subset of prediction for i class
+        true_i = tf.cast(tf.equal(y_true, i), tf.uint32) # subset of mask for i class
+        mult = tf.multiply(pred_i, true_i) # the result elements are 1 or 0
+        inters_i = tf.keras.backend.eval(tf.reduce_sum(mult))
+        union_i = tf.keras.backend.eval(tf.reduce_sum(pred_i)+tf.reduce_sum(true_i))
+
+        if inters_i > epsilon:
+            #tf.print("\n"+str(i)+" " +str(inters_i)+" "+str(union_i))
+            dice += (2. * inters_i) / union_i
+    dice = dice / N_CLASSES
+
+    # tf.print(str(pred_i*true_i))
+    return dice
 
 
 # Generalized dice loss for multi-class 3D segmentation
@@ -558,7 +624,7 @@ def create_mask(pred_mask: tf.Tensor) -> tf.Tensor:
     Parameters
     ----------
     pred_mask : tf.Tensor
-        A [IMG_SIZE, IMG_SIZE, N_CLASS] tensor. For each pixel we have
+        A [img_size, img_size, N_CLASS] tensor. For each pixel we have
         N_CLASS values (vector) which represents the probability of the pixel
         being these classes. Example: A pixel with the vector [0.0, 0.0, 1.0]
         has been predicted class 2 with a probability of 100%.
@@ -566,15 +632,15 @@ def create_mask(pred_mask: tf.Tensor) -> tf.Tensor:
     Returns
     -------
     tf.Tensor
-        A [IMG_SIZE, IMG_SIZE, 1] mask with top 1 predictions
+        A [img_size, img_size, 1] mask with top 1 predictions
         for each pixels.
     """
-    # pred_mask -> [IMG_SIZE, SIZE, N_CLASS]
+    # pred_mask -> [img_size, SIZE, N_CLASS]
     # 1 prediction for each class but we want the highest score only
     # so we use argmax
     pred_mask = tf.argmax(pred_mask, axis=-1)
-    # pred_mask becomes [IMG_SIZE, IMG_SIZE]
-    # but matplotlib needs [IMG_SIZE, IMG_SIZE, 1]
+    # pred_mask becomes [img_size, img_size]
+    # but matplotlib needs [img_size, img_size, 1]
     pred_mask = tf.expand_dims(pred_mask, axis=-1)
     return pred_mask
 
@@ -605,16 +671,16 @@ def show_predictions(dataset=None, num=1, fname=None):
     else:
         #plot_samples_matplotlib([sample_image[0], sample_mask[0]])
         # The model is expecting a tensor of the size
-        # [BATCH_SIZE, IMG_SIZE, IMG_SIZE, 3]
-        # but sample_image[0] is [IMG_SIZE, IMG_SIZE, 3]
+        # [BATCH_SIZE, img_size, img_size, 3]
+        # but sample_image[0] is [img_size, img_size, 3]
         # and we want only 1 inference to be faster
-        # so we add an additional dimension [1, IMG_SIZE, IMG_SIZE, 3]
+        # so we add an additional dimension [1, img_size, img_size, 3]
         one_img_batch = sample_image[0][tf.newaxis, ...]
-        # one_img_batch -> [1, IMG_SIZE, IMG_SIZE, 3]
+        # one_img_batch -> [1, img_size, img_size, 3]
         inference = model.predict(one_img_batch)
-        # inference -> [1, IMG_SIZE, IMG_SIZE, N_CLASS]
+        # inference -> [1, img_size, img_size, N_CLASS]
         pred_mask = create_mask(inference)
-        # pred_mask -> [1, IMG_SIZE, IMG_SIZE, 1]
+        # pred_mask -> [1, img_size, img_size, 1]
         plot_samples_matplotlib([sample_image[0], sample_mask[0], pred_mask[0]],
                                 labels_list=["Sample image", "Ground Truth", "Prediction"],
                                 fname=fname)
@@ -696,7 +762,7 @@ def fit_network(network_model, images_dataset, epochs, steps_per_epoch, validati
 def read_image(image_path, channels=3):
     img0 = tf.io.read_file(image_path)
     img0 = tf.image.decode_jpeg(img0, channels=channels)
-    img0 = tf.image.resize(img0, [IMG_SIZE,IMG_SIZE])
+    img0 = tf.image.resize(img0, [img_size,img_size])
     return img0
 
 
@@ -812,6 +878,8 @@ def do_evaluate(dataset_root_dir, batch_size, perf_file):
         exit()
 
     steps_num = testset_size // batch_size
+    if steps_num == 0:
+        steps_num = testset_size
     logger.debug("steps_num=" + str(steps_num))
     if steps_num == 0:
         print("ERROR: steps_num cannot be zero. Increase number of test  images or reduce batch_size.")
@@ -981,6 +1049,7 @@ def main():
     global learn_rate
     global transfer_learning
     global logger
+    global img_size
 
     # manual_variable_initialization(True)    # avoid that Tf/keras automatic initializazion
     seed(SEED)                              # initialize numpy random generator
@@ -1081,6 +1150,9 @@ def main():
                         "folder split technique will be used.")
     parser.add_argument('-iw', "--initialize_weights", required=False, default=None,
                         help="Speficy the file to be used to initialize the weights. It must be compatible with the network model chosen.")
+    parser.add_argument('-is', "--image_size", required=False, type=int, default=img_size,
+                        help="The size of sample images (H x W).")
+
 
     args = parser.parse_args()
 
@@ -1091,6 +1163,7 @@ def main():
     weights_fname = args.weigths_file
     epochs = args.epochs
     batch_size = args.batch_size
+    img_size = args.image_size
     network_model = args.model
     network_structure_path = args.network_structure_path
     logs_dir = args.logs_dir
@@ -1103,6 +1176,7 @@ def main():
 
     logger.debug("action=" + str(action))
     logger.debug("dataset_root_dir=" + str(dataset_root_dir))
+    logger.debug("img_size=" + str(img_size))
     logger.debug("weights_fname=" + str(weights_fname))
     logger.debug("network_model=" + str(network_model))
     logger.debug("network_structure_path=" + str(network_structure_path))
@@ -1120,43 +1194,42 @@ def main():
     elif action == ACTION_TRAIN or action == ACTION_PREDICT or action == ACTION_PREDICT_ALL or action == ACTION_EVALUATE or action == ACTION_SUMMARY:
         print("Creating network model...")
         if network_model == MODEL_DUMMY:
-            model = create_model_dummy(input_size=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel, transfer_learning=transfer_learning)
+            model = create_model_dummy(input_size=(img_size, img_size, N_CHANNELS), classes=classes_for_pixel, transfer_learning=transfer_learning)
         elif network_model == MODEL_UNET:
-            model = create_model_UNet(input_size=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel, transfer_learning=transfer_learning)
+            model = create_model_UNet(input_size=(img_size, img_size, N_CHANNELS), classes=classes_for_pixel, transfer_learning=transfer_learning)
         elif network_model == MODEL_UNET2:
-            model = create_model_UNet2(output_channels=N_CHANNELS, input_size=IMG_SIZE, classes=classes_for_pixel, transfer_learning=transfer_learning)
+            model = create_model_UNet2(output_channels=N_CHANNELS, input_size=img_size, classes=classes_for_pixel, transfer_learning=transfer_learning)
         elif network_model == MODEL_UNET3:
-            model = create_model_UNet3(input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel, transfer_learning=transfer_learning)
+            model = create_model_UNet3(input_shape=(img_size, img_size, N_CHANNELS), classes=classes_for_pixel, transfer_learning=transfer_learning)
         elif network_model == MODEL_UNET_US:
-            model = create_model_UNet_US(input_size=(IMG_SIZE, IMG_SIZE, N_CHANNELS), n_classes=classes_for_pixel, transfer_learning=transfer_learning)
+            model = create_model_UNet_US(input_size=(img_size, img_size, N_CHANNELS), n_classes=classes_for_pixel, transfer_learning=transfer_learning)
         elif network_model == MODEL_TRANSUNET:
-            # model =   models.transunet_2d((IMG_SIZE, IMG_SIZE, 3), filter_num=[16, 32, 64, 128], n_labels=12, 
+            # model =   models.transunet_2d((img_size, img_size, 3), filter_num=[16, 32, 64, 128], n_labels=12, 
             #                     stack_num_down=2, stack_num_up=2,
             #                     embed_dim=768, num_mlp=3072, num_heads=12, num_transformer=12,
             #                     activation='ReLU', mlp_activation='GELU', output_activation='Softmax', 
             #                     batch_norm=True, pool=True, unpool='bilinear', name='transunet')
-            model =   models.transunet_2d((IMG_SIZE, IMG_SIZE, 3), filter_num=[IMG_SIZE//8, IMG_SIZE//4, IMG_SIZE//2, IMG_SIZE], n_labels=3, 
+            model =   models.transunet_2d((img_size, img_size, 3), filter_num=[img_size//8, img_size//4, img_size//2, img_size], n_labels=3, 
                                 stack_num_down=2, stack_num_up=2,
                                 embed_dim=96, num_mlp=384, num_heads=3, num_transformer=12,
                                 activation='ReLU', mlp_activation='GELU', output_activation='Softmax', 
                                 batch_norm=True, pool=True, unpool='bilinear', name='transunet')
         elif network_model == MODEL_DEEPLABV3PLUS_XCEPTION or network_model == MODEL_DEEPLABV3PLUS:
             if transfer_learning == TRANSF_LEARN_PASCAL_VOC:
-                model = create_model_deeplabv3plus(weights='pascal_voc', backbone='xception', input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel)
+                model = create_model_deeplabv3plus(weights='pascal_voc', backbone='xception', input_shape=(img_size, img_size, N_CHANNELS), classes=classes_for_pixel)
             elif transfer_learning is TRANSF_LEARN_CITYSCAPES:
-                model = create_model_deeplabv3plus(weights='cityscapes', backbone='xception', input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel)
+                model = create_model_deeplabv3plus(weights='cityscapes', backbone='xception', input_shape=(img_size, img_size, N_CHANNELS), classes=classes_for_pixel)
             else:
-                model = create_model_deeplabv3plus(weights=None, backbone='xception', input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel)
+                model = create_model_deeplabv3plus(weights=None, backbone='xception', input_shape=(img_size, img_size, N_CHANNELS), classes=classes_for_pixel)
         elif network_model == MODEL_DEEPLABV3PLUS_MOBILENETV2:
             if transfer_learning == TRANSF_LEARN_PASCAL_VOC:
-                model = create_model_deeplabv3plus(weights='pascal_voc', backbone='mobilenetv2', input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel)
+                model = create_model_deeplabv3plus(weights='pascal_voc', backbone='mobilenetv2', input_shape=(img_size, img_size, N_CHANNELS), classes=classes_for_pixel)
             elif transfer_learning == TRANSF_LEARN_CITYSCAPES:
-                model = create_model_deeplabv3plus(weights='cityscapes', backbone='mobilenetv2', input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel)
+                model = create_model_deeplabv3plus(weights='cityscapes', backbone='mobilenetv2', input_shape=(img_size, img_size, N_CHANNELS), classes=classes_for_pixel)
             else:
-                model = create_model_deeplabv3plus(weights=None, backbone='mobilenetv2', input_shape=(IMG_SIZE, IMG_SIZE, N_CHANNELS), classes=classes_for_pixel)
+                model = create_model_deeplabv3plus(weights=None, backbone='mobilenetv2', input_shape=(img_size, img_size, N_CHANNELS), classes=classes_for_pixel)
         else:
-            # BUG
-            raise ValueError('BUG: Model of network not supported.')
+            raise ValueError('ERROR: network model not specified or not supported. Check parameter -m')
 
     if action == ACTION_TRAIN or action == ACTION_PREDICT or action == ACTION_PREDICT_ALL or action == ACTION_EVALUATE or action == ACTION_SUMMARY:
         if init_weights_fname is not None:
@@ -1169,7 +1242,7 @@ def main():
         # IoU = tf.keras.metrics.IoU(num_classes=2, target_class_ids=[0], name ='IoU')
         # meanIoU = tf.keras.metrics.MeanIoU(num_classes=2)
         # F1Score = tfa.metrics.F1Score(num_classes=3, threshold=0.5)
-        metrics = ['sparse_categorical_accuracy', dice_multiclass]
+        metrics = [dice_multiclass, dice_batch]
         print("Compiling the network model...")
         model.compile(optimizer=optimizer, loss=loss, metrics=metrics) 
 
@@ -1316,11 +1389,9 @@ def main():
             y_pred = predictions
 
             c1 = dice_multiclass(y_truth, y_pred)
-            c2 = multiclass_accuracy(y_truth, y_pred)
-            c3 = dice_target_class(y_truth, y_pred)
+            c2 = dice_batch(y_truth, y_pred)
             print("dice_multiclass="+str(c1))
-            print("multiclass_accuracy=" + str(c2))
-            print("dice_target_class="+ str(c3))
+            print("dice_batch="+ str(c2))
 
             plot_samples_matplotlib([img0, truth, visual_pred], ["Sample", "Ground Truth", "Prediction"], fname=fout)
         else:
@@ -1365,10 +1436,25 @@ def main():
         os.mkdir(temp)
         temp = os.path.join(PREDICT_IMAGES_DIR, DATASET_TEST_SUBDIR)
         os.mkdir(temp)
+        #
+        os.mkdir(PREDICT_MASK_DIR)
+        # IMAGES SUBDIRS
+        temp = os.path.join(PREDICT_MASK_DIR, DATASET_TRAIN_SUBDIR)
+        os.mkdir(temp)
+        temp = os.path.join(PREDICT_MASK_DIR, DATASET_VAL_SUBDIR)
+        os.mkdir(temp)
+        temp = os.path.join(PREDICT_MASK_DIR, DATASET_TEST_SUBDIR)
+        os.mkdir(temp)
 
         # print file header
         print("Folder; Filename; Dice\n", end="", file=open(FILE_DICE_CSV, 'a'))
 
+        nTrain  = 0 
+        nVal    = 0
+        nTest   = 0
+        avgTrain= 0.
+        avgVal  = 0.
+        avgTest = 0.
         for input_fname in filenames:
             if not input_fname.endswith(".jpg"):
                 break
@@ -1405,18 +1491,28 @@ def main():
             fout = fn + ".jpg"
             fout = os.path.join(PREDICT_COMPARISON_DIR, subdir, fout)
 
-            dice = -1
+            dice = -1.
             if os.path.exists(truth_path):
                 truth = tf.io.read_file(truth_path)
                 truth = tf.image.decode_png(truth, channels=1)
                 truth = tf.where(truth == 255, np.dtype('uint8').type(0), truth)
-                truth = tf.image.resize(truth, [IMG_SIZE,IMG_SIZE])
+                truth = tf.image.resize(truth, [img_size,img_size])
                 truth -= 1 # normalize
 
                 y_truth = tf.expand_dims(truth, axis=0)
                 y_pred = predictions
                 
-                dice = dice_multiclass(y_truth, y_pred)
+                dice = dice_batch(y_truth, y_pred)
+
+                if subdir == DATASET_TRAIN_SUBDIR:
+                    nTrain += 1
+                    avgTrain += dice
+                elif subdir == DATASET_VAL_SUBDIR:
+                    nVal += 1
+                    avgVal += dice
+                else:
+                    nTest += 1
+                    avgTest += dice
 
                 plot_samples_matplotlib([img0, truth, visual_pred], ["Sample", "Ground Truth", "Prediction"], fname=fout)
             else:
@@ -1425,11 +1521,26 @@ def main():
             trans = str.maketrans('.,', ',.')
             print(format(dice, ',.6f').translate(trans) + "\n", end="", file=open(FILE_DICE_CSV, 'a'))
 
+
+            # compute trimap output and save image to disk
+            fout = os.path.join(PREDICT_MASK_DIR, subdir, output_fname)
+            img1 = tf.image.resize(visual_pred, (300, 300))    # TODO HARDCODED fit with Parkinson dataset
+            img1 = tf.cast(img1, tf.uint8)
+            img1 = tf.image.encode_png(img1)
+            tf.io.write_file(fout, img1)
+
             # compute grayscale segmented image and save it to disk
             fout = os.path.join(PREDICT_IMAGES_DIR, subdir, output_fname)
             #logger.debug("Saving grayscale segmented image to file: " + output_fname)
             jpeg = generate_greyscale_image(visual_pred)
             tf.io.write_file(fout, jpeg)
+        
+        avgTrain = avgTrain / nTrain
+        avgVal   = avgVal / nVal
+        avgTest  = avgTest / nTest
+        print("Average training dice; {:.6f}".format(avgTrain), file=open(FILE_DICE_CSV, 'a'))
+        print("Average validation dice; {:.6f}".format(avgVal), file=open(FILE_DICE_CSV, 'a'))
+        print("Average test dice; {:.6f}".format(avgTest), file=open(FILE_DICE_CSV, 'a'))
 
     elif args.action == ACTION_SUMMARY:
         # print network's structure summary and save whole architecture plus weigths
@@ -1579,6 +1690,9 @@ def main():
             exit()
 
         steps_num = testset_size // batch_size
+        if steps_num == 0:
+            steps_num = testset_size
+
         logger.debug("steps_num=" + str(steps_num))
         if steps_num == 0:
             print("ERROR: steps_num cannot be zero. Increase number of images or reduce batch_size.")
@@ -1629,4 +1743,9 @@ def main():
     logger.debug("Program end.")
 
 if __name__ == '__main__':
+    # create a dummy image with all one that can be used as a dummy ground truth
+    # img = np.full(shape=(300, 300, 1), fill_value=1, dtype="uint8")
+    # png = tf.image.encode_png(tf.cast(img, tf.uint8))
+    # tf.io.write_file("dummy1.png", png)
+    # exit(1)
     main()
