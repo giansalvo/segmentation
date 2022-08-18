@@ -39,6 +39,7 @@ import shutil
 import logging
 from glob import glob
 
+import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 from numpy.random import seed
@@ -135,6 +136,7 @@ FILE_DICE_CSV = "dices.csv"
 PREDICT_IMAGES_DIR = "output1"
 PREDICT_COMPARISON_DIR = "output2"
 PREDICT_MASK_DIR = "output3"
+OVERLAY_DIR = "output4"
 
 # COPYRIGHT NOTICE AND PROGRAM VERSION
 COPYRIGHT_NOTICE = "Copyright (C) 2022 Giansalvo Gusinu"
@@ -538,9 +540,6 @@ def dice_batch(Y_true, Y_pred, epsilon=1e-5):
 
         dice = dice_simple(y_true, y_pred)
 
-        assert dice <= 1.
-        assert dice >= 0.
-
         # increment accuracy for the batch
         dice_batch += dice
     # compute the average accuracy for the whole batch
@@ -641,7 +640,7 @@ def create_mask(pred_mask: tf.Tensor) -> tf.Tensor:
         A [img_size, img_size, 1] mask with top 1 predictions
         for each pixels.
     """
-    # pred_mask -> [img_size, SIZE, N_CLASS]
+    # pred_mask -> [img_size, img_size, N_CLASS]
     # 1 prediction for each class but we want the highest score only
     # so we use argmax
     pred_mask = tf.argmax(pred_mask, axis=-1)
@@ -671,7 +670,9 @@ def show_predictions(dataset=None, num=1, fname=None):
                 i+=1
             inference = model.predict(image)
             predictions = create_mask(inference)
-            plot_samples_matplotlib([image[0], true_mask[0], predictions[0]], 
+            pred = predictions[0]
+            pred += 1
+            plot_samples_matplotlib([image[0], true_mask[0], pred], 
                                     labels_list=["Sample image", "Ground Truth", "Prediction"],
                                     fname=fname)
     else:
@@ -687,7 +688,9 @@ def show_predictions(dataset=None, num=1, fname=None):
         # inference -> [1, img_size, img_size, N_CLASS]
         pred_mask = create_mask(inference)
         # pred_mask -> [1, img_size, img_size, 1]
-        plot_samples_matplotlib([sample_image[0], sample_mask[0], pred_mask[0]],
+        pred = pred_mask[0]
+        pred += 1
+        plot_samples_matplotlib([sample_image[0], sample_mask[0], pred],
                                 labels_list=["Sample image", "Ground Truth", "Prediction"],
                                 fname=fname)
 
@@ -809,13 +812,70 @@ def generate_colormap_image(input_fname):
 #     rgb = np.stack([r, g, b], axis=2)
 #     return rgb
 
+def put_text(image, text, x=5, y=20, w=20, h=40):
+    # blue = (209, 80, 0, 255),  # font color
+    white = (255, 255, 255, 255)  # font color
+    # Draw black background rectangle
+    #cv2.rectangle(image, (x, x), (x + w, y + h), (0, 0, 0), -1)
+    cv2.putText(
+        image,  # numpy array on which text is written
+        text,  # text
+        (x, y),  # position at which writing has to start
+        cv2.FONT_HERSHEY_SIMPLEX,  # font family
+        0.5,  # font size
+        white,  # font color
+        1)  # font stroke  
+    return image
 
-# def get_overlay(image, colored_mask):
-#     image = tf.keras.preprocessing.image.array_to_img(image)
-#     image = np.array(image).astype(np.uint8)
-#     overlay = cv2.addWeighted(image, 0.35, colored_mask, 0.65, 0)
-#     return overlay
+def get_overlay(img_sample, img_pred, img_gt):
+    # overlay between sample image, ground truth and prediction
+    FOREGROUND = 1
+    OFFSET = 255 - FOREGROUND
+    ALFA = 0.5
+    BETA = 1 - ALFA
+    RED = [0,0, 255] # BGR
+    WHITE = [255,255,255]
+    COLOR_WHITE_LOWER = np.array([0, 0, 255])
+    COLOR_WHITE_UPPER = np.array([180, 255, 255])
+    CONTOUR_COLOR = (0, 255, 0)  # green contour (BGR)
+    CONTOUR_THICK = 2
 
+    # img_sample = cv2.imread("I000.jpg")
+    # print(str(img_sample.shape))
+    # img_pred = cv2.imread("I000_pred.jpg", cv2.IMREAD_GRAYSCALE)
+    # print(str(img_pred.shape))    
+    # img_gt = cv2.imread("I000_gc.png", cv2.IMREAD_GRAYSCALE)
+    # print(str(img_gt.shape))
+    # exit(1)
+
+    #####
+    # fusion of sample image and foreground area from predicted image
+    #####
+    img_pred += OFFSET
+    img_pred=cv2.cvtColor(img_pred, cv2.COLOR_GRAY2BGR)
+    img_pred[np.all(img_pred == WHITE, axis=-1)] = RED
+    result = cv2.addWeighted( img_sample, ALFA, img_pred, BETA, 0.0)
+
+    #####
+    # extract contour of foreground area from ground truth
+    #####
+    img_gt += OFFSET
+    img_gt=cv2.cvtColor(img_gt, cv2.COLOR_GRAY2BGR)
+    # change color space and set color mask
+    imghsv = cv2.cvtColor(img_gt, cv2.COLOR_BGR2HSV)
+    mask_color = cv2.inRange(imghsv, COLOR_WHITE_LOWER, COLOR_WHITE_UPPER)
+    # get close contour
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, ksize=(3, 3))
+    img_close_contours = cv2.morphologyEx(mask_color, cv2.MORPH_CLOSE, kernel, iterations=1)
+    # Find outer contours
+    cnts, _ = cv2.findContours(img_close_contours, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    # img_contours = np.zeros((img_gt.shape[0], img_gt.shape[1], 3), dtype="uint8")  # RGB image black
+    # and draw on previously prepared image
+    cv2.drawContours(result, cnts, -1, CONTOUR_COLOR, CONTOUR_THICK)
+    
+    # cv2.imshow("result", result)
+    # cv2.waitKey(0)
+    return result
 
 
 def plot_samples_matplotlib(display_list, labels_list=None, figsize=None, fname=None):
@@ -1248,7 +1308,7 @@ def main():
         # IoU = tf.keras.metrics.IoU(num_classes=2, target_class_ids=[0], name ='IoU')
         # meanIoU = tf.keras.metrics.MeanIoU(num_classes=2)
         # F1Score = tfa.metrics.F1Score(num_classes=3, threshold=0.5)
-        metrics = [dice_multiclass, dice_batch]
+        metrics = [dice_batch] # dice_multiclass
         print("Compiling the network model...")
         model.compile(optimizer=optimizer, loss=loss, metrics=metrics) 
 
@@ -1355,10 +1415,10 @@ def main():
         img0 = read_image(input_fname)
         img_tensor = tf.cast(img0, tf.float32) / 255.0    # normalize
         print("img_tensor tensor shape: " + str(img_tensor.shape))
-        #prediction = infer(model=model, image_tensor=img_tensor)
         img = np.expand_dims(img_tensor, axis=0)
         predictions = model.predict(img)
         visual_pred = create_mask(predictions)[0]
+        visual_pred += 1
 
         print("prediction tensor shape: " + str(predictions.shape))
         
@@ -1451,6 +1511,15 @@ def main():
         os.mkdir(temp)
         temp = os.path.join(PREDICT_MASK_DIR, DATASET_TEST_SUBDIR)
         os.mkdir(temp)
+        #
+        os.mkdir(OVERLAY_DIR)
+        # IMAGES SUBDIRS
+        temp = os.path.join(OVERLAY_DIR, DATASET_TRAIN_SUBDIR)
+        os.mkdir(temp)
+        temp = os.path.join(OVERLAY_DIR, DATASET_VAL_SUBDIR)
+        os.mkdir(temp)
+        temp = os.path.join(OVERLAY_DIR, DATASET_TEST_SUBDIR)
+        os.mkdir(temp)
 
         # print file header
         print("Folder; Filename; Dice\n", end="", file=open(FILE_DICE_CSV, 'a'))
@@ -1478,11 +1547,11 @@ def main():
 
             img0 = read_image(input_fname)
             img_tensor = tf.cast(img0, tf.float32) / 255.0    # normalize
-            #prediction = infer(model=model, image_tensor=img_tensor)
             img = np.expand_dims(img_tensor, axis=0)
             predictions = model.predict(img)
             visual_pred = create_mask(predictions)[0]
-            
+            visual_pred += 1 # de-normalization
+
             truth_path = os.path.join(os.path.dirname(input_fname), "..", "..", DATASET_ANNOT_SUBDIR, DATASET_TRAIN_SUBDIR, fn + ".png")
             if os.path.exists(truth_path):
                 subdir = DATASET_TRAIN_SUBDIR
@@ -1501,7 +1570,6 @@ def main():
             if os.path.exists(truth_path):
                 truth = tf.io.read_file(truth_path)
                 truth = tf.image.decode_png(truth, channels=1)
-                truth = tf.where(truth == 255, np.dtype('uint8').type(0), truth)
                 truth = tf.image.resize(truth, [img_size,img_size])
                 truth -= 1 # normalize
 
@@ -1519,8 +1587,23 @@ def main():
                 else:
                     nTest += 1
                     avgTest += dice
-
+                
                 plot_samples_matplotlib([img0, truth, visual_pred], ["Sample", "Ground Truth", "Prediction"], fname=fout)
+
+                # convert to OpenCV image format
+                i0 = img0.numpy()
+                i1 = visual_pred.numpy()
+                i1 = np.squeeze(i1)
+                i1 = np.float32(i1)
+                i2 = truth.numpy()
+                i2 = np.squeeze(i2)
+
+                overlay = get_overlay(i0, i1, i2)
+                overlay = put_text(overlay, "DSC = {:.2f}".format(dice))
+
+                fout = fn + ".png"
+                fout = os.path.join(OVERLAY_DIR, subdir, fout)
+                cv2.imwrite(fout, overlay,  [int(cv2.IMWRITE_PNG_COMPRESSION), 0])
             else:
                 plot_samples_matplotlib([img0, visual_pred], ["Sample", "Prediction"], fname=fout)
 
@@ -1544,6 +1627,9 @@ def main():
         avgTrain = avgTrain / nTrain
         avgVal   = avgVal / nVal
         avgTest  = avgTest / nTest
+        print("Average training dice: {:.4f}".format(avgTrain))
+        print("Average validation dice: {:.4f}".format(avgVal))
+        print("Average test dice: {:.4f}".format(avgTest))
         print("Average training dice; {:.6f}".format(avgTrain), file=open(FILE_DICE_CSV, 'a'))
         print("Average validation dice; {:.6f}".format(avgVal), file=open(FILE_DICE_CSV, 'a'))
         print("Average test dice; {:.6f}".format(avgTest), file=open(FILE_DICE_CSV, 'a'))
@@ -1754,4 +1840,5 @@ if __name__ == '__main__':
     # png = tf.image.encode_png(tf.cast(img, tf.uint8))
     # tf.io.write_file("dummy1.png", png)
     # exit(1)
+
     main()
