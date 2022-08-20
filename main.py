@@ -1159,17 +1159,21 @@ def main():
                 "         $python %(prog)s split -ir initial_root_dir -dr dataset_root_dir -s 0.7 0.1 0.2\n"
                 "\n"
                 "       Print the summary of the network model and save the model to disk:\n"
-                "         $python %(prog)s summary -m deeplabv3plus\n"
+                "         $python %(prog)s summary -m unet_us [-is 256]\n"
                 "\n"
                 "       Train the network and write the weigths to disk:\n"
-                "         $python %(prog)s train -m deeplabv3plus -dr dataset_dir \n"
-                "         $python %(prog)s train -m deeplabv3plus -dr dataset_dir -w weigths_file.h5 --check\n"
+                "         $python %(prog)s train -m unet_us -dr dataset_dir \n"
+                "         $python %(prog)s train -m unet_us -dr dataset_dir [-k 10]\n"
+                "         $python %(prog)s train -m unet_us -dr dataset_dir -w weigths_file.h5 [--check] [-b 64] [-is 256]\n"
                 "\n"
                 "       Make the network predict the segmented image of a given input image:\n"
-                "         $python %(prog)s predict -m deeplabv3plus -i image.jpg -w weigths_file.h5 --check\n"
+                "         $python %(prog)s predict -m unet_us -i image.jpg -w weigths_file.h5 [--check] [-is 256]\n"
                 "\n"
+                "       Make the network predict the segmented image of all input image:\n"
+                "         $python %(prog)s predict_all -m unet_us -dr dataset_dir -w weigths_file.h5 [-is 256]\n"
+                "\n"                
                 "       Evaluate the network loss/accuracy performances based on the test set in the dataset directories hierarchy:\n"
-                "         $python %(prog)s evaluate -m deeplabv3plus -dr dataset_dir -w weigths_file.h5 --check\n"
+                "         $python %(prog)s evaluate -m unet_us -dr dataset_dir -w weigths_file.h5 [--check] [-is 256]\n"
                 "\n"
                 "       Inspect some predictions from previous trainings:\n"
                 "         $python %(prog)s inspect -r *.jpg\n"
@@ -1454,12 +1458,24 @@ def main():
             y_truth = tf.expand_dims(truth, axis=0)
             y_pred = predictions
 
-            c1 = dice_multiclass(y_truth, y_pred)
-            c2 = dice_batch(y_truth, y_pred)
-            print("dice_multiclass="+str(c1))
-            print("dice_batch="+ str(c2))
+            dice = dice_batch(y_truth, y_pred)
+            print("dice = {:.4f}".format(dice))
 
             plot_samples_matplotlib([img0, truth, visual_pred], ["Sample", "Ground Truth", "Prediction"], fname=fout)
+
+            # compute and save overlay image
+            fout = fn + "_ovl.png"
+            print("Saving overlay image to file: " + fout)
+            # convert to OpenCV image format
+            i0 = img0.numpy()
+            i1 = visual_pred.numpy()
+            i1 = np.squeeze(i1)
+            i1 = np.float32(i1)
+            i2 = truth.numpy()
+            i2 = np.squeeze(i2)
+            overlay = get_overlay(i0, i1, i2)
+            overlay = put_text(overlay, "DSC = {:.2f}".format(dice))
+            cv2.imwrite(fout, overlay,  [int(cv2.IMWRITE_PNG_COMPRESSION), 0])
         else:
             plot_samples_matplotlib([img0, visual_pred], ["Sample", "Prediction"], fname=fout)
             print("Ground truth image not found!")
