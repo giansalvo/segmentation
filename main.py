@@ -962,10 +962,12 @@ def do_evaluate(dataset_root_dir, batch_size, perf_file):
 
     results = model.evaluate(test_dataset,
                             steps = steps_num)
-    # results = list(zip(model.metrics_names, scores))
     # Print results to file
     print("\nEvaluation on test set:", file=open(perf_file, 'a'))
-    print(str(dict(zip(model.metrics_names, results))), file=open(perf_file, 'a'))
+    d = dict(zip(model.metrics_names, results))
+    print(d)
+    for key in d.keys():
+         print("{}: {:.4f}".format(key,  d[key]), file=open(perf_file, 'a'))
     return results
                           
 
@@ -1089,7 +1091,6 @@ def train_network(train_files, val_files, epochs, batch_size, weights_fname, tim
     print("Saving some predictions to file...")
     show_predictions(dataset['train'], 4, fname = fn_pred)
 
-    # tf.keras.backend.clear_session()
     return model_history
 
 
@@ -1369,7 +1370,7 @@ def main():
                 print("Evaluating model on test set...")
                 
                 scores = do_evaluate(dataset_root_dir=dataset_root_dir, batch_size=batch_size, perf_file=fn_perf)
-                dice_coeffs.append(scores[2])
+                dice_coeffs.append(scores[1])
 
             print("Compute dice and save to file " + fn_perf)
             print("\ndice:" + str(dice_coeffs), file=open(fn_perf, 'a'), flush=True)
@@ -1776,45 +1777,6 @@ def main():
         print("\n")
 
     elif args.action == ACTION_EVALUATE:
-        # TODO replace with a call to do_evaluate()
-        if args.dataset_root_dir is None:
-            print("ERROR: you must specify the initial_root_dir parameter")
-            exit()
-        else:
-            dataset_images_path =  os.path.join(args.dataset_root_dir, DATASET_IMG_SUBDIR)
-        test_files_regexp =  os.path.join(dataset_images_path, DATASET_TEST_SUBDIR, FEXT_JPEG)
-
-        logger.debug("check=" + str(check))
-        logger.debug("dataset_images_path=" + dataset_images_path)
-        logger.debug("batch_size=" + str(batch_size))
-        logger.debug("testset=" + test_files_regexp)
-
-        # Creating a source dataset
-        testset_size = len(glob(test_files_regexp))
-        print(f"The test Dataset contains {testset_size} images.")
-
-        if testset_size == 0:
-            print("ERROR: the test datasets must be not empty!")
-            exit()
-
-        steps_num = testset_size // batch_size
-        if steps_num == 0:
-            steps_num = testset_size
-
-        logger.debug("steps_num=" + str(steps_num))
-        if steps_num == 0:
-            print("ERROR: steps_num cannot be zero. Increase number of images or reduce batch_size.")
-            exit()
-
-        test_dataset = tf.data.Dataset.list_files(test_files_regexp, seed=SEED)
-        test_dataset = test_dataset.map(parse_image)
-
-        # -- test Dataset --#
-        test_dataset = test_dataset.map(load_image)
-        test_dataset = test_dataset.repeat()
-        test_dataset = test_dataset.batch(batch_size)
-        test_dataset = test_dataset.prefetch(buffer_size=tf.data.AUTOTUNE)
-
         if network_structure_path is not None:
             print("Loading network model from " + network_structure_path)
             model = tf.keras.models.load_model(network_structure_path, custom_objects={'dice_coef': dice_coef})
@@ -1824,9 +1786,11 @@ def main():
         else:
             print("ERROR: network_structure_path or weights_fname argument must be provided.")
             exit(1)
-        scores = model.evaluate(test_dataset,
-                                steps = steps_num)
-        print(str(dict(zip(model.metrics_names, scores))))
+
+        fn, fext = os.path.splitext(os.path.basename(weights_fname))
+        fn_perf = "perf_" + fn + ".txt"
+        do_evaluate(dataset_root_dir=args.dataset_root_dir, batch_size=batch_size, perf_file=fn_perf)
+
     elif args.action == ACTION_INSPECT:
         logger.debug("regexp=" + regexp)
         filenames_regexp = regexp
