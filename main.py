@@ -1641,9 +1641,12 @@ def main():
             jpeg = generate_greyscale_image(visual_pred)
             tf.io.write_file(fout, jpeg)
         
-        avgTrain = avgTrain / nTrain
-        avgVal   = avgVal / nVal
-        avgTest  = avgTest / nTest
+        if nTrain > 0:
+            avgTrain = avgTrain / nTrain
+        if nVal > 0:
+            avgVal   = avgVal / nVal
+        if nTest > 0:
+            avgTest  = avgTest / nTest
         print("Average training dice: {:.4f}".format(avgTrain))
         print("Average validation dice: {:.4f}".format(avgVal))
         print("Average test dice: {:.4f}".format(avgTest))
