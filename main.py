@@ -859,7 +859,7 @@ def get_overlay(img_sample, img_pred, img_gt):
     #####
     # extract contour of foreground area from ground truth
     #####
-    img_gt += OFFSET
+    img_gt += OFFSET +1
     img_gt=cv2.cvtColor(img_gt, cv2.COLOR_GRAY2BGR)
     # change color space and set color mask
     imghsv = cv2.cvtColor(img_gt, cv2.COLOR_BGR2HSV)
