@@ -530,8 +530,8 @@ def dice_batch(Y_true, Y_pred, epsilon=1e-5):
     # tf.print("Y_true.shape="+str(Y_true.shape))
     nbatch_size = Y_true.shape[0]
     # tf.print("dice_batch: nbatch_size="+str(nbatch_size))
-    if nbatch_size is None:
-        return float('nan')
+    assert(nbatch_size is not None)
+    assert(nbatch_size > 0.)
     dice_batch = 0.
     for i in range(nbatch_size):
         # extract i-th images (sample and mask) from batch and normalize them
@@ -969,7 +969,122 @@ def do_evaluate(dataset_root_dir, batch_size, perf_file):
     for key in d.keys():
          print("{}: {:.4f}".format(key,  d[key]), file=open(perf_file, 'a'))
     return results
-                          
+
+def do_predict_all(training_files, validation_files, test_files, output=False):
+    nTrain  = 0 
+    nVal    = 0
+    nTest   = 0
+    avgTrain= 0.
+    avgVal  = 0.
+    avgTest = 0.
+
+    filenames = training_files + validation_files + test_files
+
+    for input_fname in filenames:
+        if not input_fname.endswith(".jpg"):
+            break
+
+        #logger.debug("input_fname=" + input_fname)
+        output_fname = input_fname
+        fn, fext = os.path.splitext(os.path.basename(output_fname))
+        output_fname = fn + fext
+        out_3map_fname = fn + "_3map" + fext
+        out_cmap_fname = fn + "_cmap.png"
+        wfn, wfext = os.path.splitext(os.path.basename(weights_fname))
+        # logger.debug("output_fname=" + output_fname)
+
+        if output:
+            print(os.path.split(input_fname)[0] + "; " + os.path.split(input_fname)[1] + "; ", end="", file=open(FILE_DICE_CSV, 'a'))
+
+        img0 = read_image(input_fname)
+        img_tensor = tf.cast(img0, tf.float32) / 255.0    # normalize
+        img = np.expand_dims(img_tensor, axis=0)
+        predictions = model.predict(img)
+        visual_pred = create_mask(predictions)[0]
+        visual_pred += 1 # de-normalization
+
+        truth_path = os.path.join(os.path.dirname(input_fname), "..", "..", DATASET_ANNOT_SUBDIR, DATASET_TRAIN_SUBDIR, fn + ".png")
+        if os.path.exists(truth_path):
+            subdir = DATASET_TRAIN_SUBDIR
+        else:
+            truth_path = os.path.join(os.path.dirname(input_fname), "..", "..", DATASET_ANNOT_SUBDIR, DATASET_VAL_SUBDIR, fn + ".png")
+            if os.path.exists(truth_path):
+                subdir = DATASET_VAL_SUBDIR
+            else:
+                subdir = DATASET_TEST_SUBDIR
+                truth_path = os.path.join(os.path.dirname(input_fname), "..", "..", DATASET_ANNOT_SUBDIR, DATASET_TEST_SUBDIR, fn + ".png")
+        fn, fext = os.path.splitext(os.path.basename(input_fname))
+        fout = fn + ".jpg"
+        fout = os.path.join(PREDICT_COMPARISON_DIR, subdir, fout)
+
+        dice = -1.
+        if os.path.exists(truth_path):
+            truth = tf.io.read_file(truth_path)
+            truth = tf.image.decode_png(truth, channels=1)
+            truth = tf.image.resize(truth, [img_size,img_size])
+            truth -= 1 # normalize
+
+            y_truth = tf.expand_dims(truth, axis=0)
+            y_pred = predictions
+            
+            dice = dice_batch(y_truth, y_pred)
+
+            if input_fname in training_files:
+                nTrain += 1
+                avgTrain += dice
+            elif input_fname in validation_files:
+                nVal += 1
+                avgVal += dice
+            else:
+                nTest += 1
+                avgTest += dice
+            
+            if output:
+                plot_samples_matplotlib([img0, truth, visual_pred], ["Sample", "Ground Truth", "Prediction"], fname=fout)
+
+                # convert to OpenCV image format
+                i0 = img0.numpy()
+                i1 = visual_pred.numpy()
+                i1 = np.squeeze(i1)
+                i1 = np.float32(i1)
+                i2 = truth.numpy()
+                i2 = np.squeeze(i2)
+
+                overlay = get_overlay(i0, i1, i2)
+                overlay = put_text(overlay, "DSC = {:.2f}".format(dice))
+
+                fout = fn + ".png"
+                fout = os.path.join(OVERLAY_DIR, subdir, fout)
+                cv2.imwrite(fout, overlay,  [int(cv2.IMWRITE_PNG_COMPRESSION), 0])
+        else:
+            if output:
+                plot_samples_matplotlib([img0, visual_pred], ["Sample", "Prediction"], fname=fout)
+
+        if output:
+            trans = str.maketrans('.,', ',.')
+            print(format(dice, ',.6f').translate(trans) + "\n", end="", file=open(FILE_DICE_CSV, 'a'))
+
+            # compute trimap output and save image to disk
+            fout = os.path.join(PREDICT_MASK_DIR, subdir, output_fname)
+            img1 = tf.image.resize(visual_pred, (300, 300))    # TODO HARDCODED fit with Parkinson dataset
+            img1 = tf.cast(img1, tf.uint8)
+            img1 = tf.image.encode_png(img1)
+            tf.io.write_file(fout, img1)
+
+            # compute grayscale segmented image and save it to disk
+            fout = os.path.join(PREDICT_IMAGES_DIR, subdir, output_fname)
+            #logger.debug("Saving grayscale segmented image to file: " + output_fname)
+            jpeg = generate_greyscale_image(visual_pred)
+            tf.io.write_file(fout, jpeg)
+    
+    if nTrain > 0:
+        avgTrain = avgTrain / nTrain
+    if nVal > 0:
+        avgVal   = avgVal / nVal
+    if nTest > 0:
+        avgTest  = avgTest / nTest
+
+    return (avgTrain, avgVal, avgTest)
 
 def train_network(train_files, val_files, epochs, batch_size, weights_fname, timestamp, fn_pred, fn_perf):
     global sample_image
@@ -1348,6 +1463,7 @@ def main():
 
             model.save_weights(TEMP_WEIGHTS_FILE)
             dice_coeffs = []
+            dice_coeffs2 = []
             kf = KFold(n_splits=kfold_num, shuffle=True)
          
             for k, (train_index, test_index) in enumerate(kf.split(files_list)):
@@ -1372,11 +1488,20 @@ def main():
                 scores = do_evaluate(dataset_root_dir=dataset_root_dir, batch_size=batch_size, perf_file=fn_perf)
                 dice_coeffs.append(scores[1])
 
+                test_files_regexp = os.path.join(dataset_images_path, DATASET_TEST_SUBDIR, FEXT_JPEG)
+                test_files = glob(test_files_regexp)
+                avgTrain, avgVal, avgTest = do_predict_all(train_files, val_files, test_files, output=False)
+                print ("\nPredict all: avgTrain={:.4f} avgVal={:.4f} avgTest={:.4f}".format(avgTrain, avgVal, avgTest), file=open(fn_perf, 'a'), flush=True)
+                dice_coeffs2.append(avgTest)
+
             print("Compute dice and save to file " + fn_perf)
             print("\ndice:" + str(dice_coeffs), file=open(fn_perf, 'a'), flush=True)
             dice_avg = np.mean(np.array(dice_coeffs))
             dice_std = np.std(np.array(dice_coeffs), ddof=1)
             print("\nDice: average {:.4f} +/- std {:.4f}".format(dice_avg,dice_std), file=open(fn_perf, 'a'), flush=True)
+            dice_avg2 = np.mean(np.array(dice_coeffs2))
+            dice_std2 = np.std(np.array(dice_coeffs2), ddof=1)
+            print("\nPredictAll Dice: average {:.4f} +/- std {:.4f}".format(dice_avg2,dice_std2), file=open(fn_perf, 'a'), flush=True)
         else:
             weights_fname = fn + fext
             fn_pred = "pred_" + fn + ".png"
@@ -1487,7 +1612,10 @@ def main():
         training_files_regexp =  os.path.join(dataset_images_path, DATASET_TRAIN_SUBDIR, FEXT_JPEG)
         validation_files_regexp = os.path.join(dataset_images_path, DATASET_VAL_SUBDIR, FEXT_JPEG)
         test_files_regexp = os.path.join(dataset_images_path, DATASET_TEST_SUBDIR, FEXT_JPEG)
-        filenames = glob(training_files_regexp) + glob(validation_files_regexp) + glob(test_files_regexp)
+        train_files = glob(training_files_regexp)
+        val_files = glob(validation_files_regexp)
+        test_files = glob(test_files_regexp)
+        filenames =  train_files + val_files + test_files 
         ntot = len(list(filenames))
         print("Number of images found: ", ntot)
 
@@ -1541,112 +1669,8 @@ def main():
         # print file header
         print("Folder; Filename; Dice\n", end="", file=open(FILE_DICE_CSV, 'a'))
 
-        nTrain  = 0 
-        nVal    = 0
-        nTest   = 0
-        avgTrain= 0.
-        avgVal  = 0.
-        avgTest = 0.
-        for input_fname in filenames:
-            if not input_fname.endswith(".jpg"):
-                break
+        avgTrain, avgVal, avgTest = do_predict_all(train_files, val_files, test_files, output=True)
 
-            #logger.debug("input_fname=" + input_fname)
-            output_fname = input_fname
-            fn, fext = os.path.splitext(os.path.basename(output_fname))
-            output_fname = fn + fext
-            out_3map_fname = fn + "_3map" + fext
-            out_cmap_fname = fn + "_cmap.png"
-            wfn, wfext = os.path.splitext(os.path.basename(weights_fname))
-            # logger.debug("output_fname=" + output_fname)
-
-            print(os.path.split(input_fname)[0] + "; " + os.path.split(input_fname)[1] + "; ", end="", file=open(FILE_DICE_CSV, 'a'))
-
-            img0 = read_image(input_fname)
-            img_tensor = tf.cast(img0, tf.float32) / 255.0    # normalize
-            img = np.expand_dims(img_tensor, axis=0)
-            predictions = model.predict(img)
-            visual_pred = create_mask(predictions)[0]
-            visual_pred += 1 # de-normalization
-
-            truth_path = os.path.join(os.path.dirname(input_fname), "..", "..", DATASET_ANNOT_SUBDIR, DATASET_TRAIN_SUBDIR, fn + ".png")
-            if os.path.exists(truth_path):
-                subdir = DATASET_TRAIN_SUBDIR
-            else:
-                truth_path = os.path.join(os.path.dirname(input_fname), "..", "..", DATASET_ANNOT_SUBDIR, DATASET_VAL_SUBDIR, fn + ".png")
-                if os.path.exists(truth_path):
-                    subdir = DATASET_VAL_SUBDIR
-                else:
-                    subdir = DATASET_TEST_SUBDIR
-                    truth_path = os.path.join(os.path.dirname(input_fname), "..", "..", DATASET_ANNOT_SUBDIR, DATASET_TEST_SUBDIR, fn + ".png")
-            fn, fext = os.path.splitext(os.path.basename(input_fname))
-            fout = fn + ".jpg"
-            fout = os.path.join(PREDICT_COMPARISON_DIR, subdir, fout)
-
-            dice = -1.
-            if os.path.exists(truth_path):
-                truth = tf.io.read_file(truth_path)
-                truth = tf.image.decode_png(truth, channels=1)
-                truth = tf.image.resize(truth, [img_size,img_size])
-                truth -= 1 # normalize
-
-                y_truth = tf.expand_dims(truth, axis=0)
-                y_pred = predictions
-                
-                dice = dice_batch(y_truth, y_pred)
-
-                if subdir == DATASET_TRAIN_SUBDIR:
-                    nTrain += 1
-                    avgTrain += dice
-                elif subdir == DATASET_VAL_SUBDIR:
-                    nVal += 1
-                    avgVal += dice
-                else:
-                    nTest += 1
-                    avgTest += dice
-                
-                plot_samples_matplotlib([img0, truth, visual_pred], ["Sample", "Ground Truth", "Prediction"], fname=fout)
-
-                # convert to OpenCV image format
-                i0 = img0.numpy()
-                i1 = visual_pred.numpy()
-                i1 = np.squeeze(i1)
-                i1 = np.float32(i1)
-                i2 = truth.numpy()
-                i2 = np.squeeze(i2)
-
-                overlay = get_overlay(i0, i1, i2)
-                overlay = put_text(overlay, "DSC = {:.2f}".format(dice))
-
-                fout = fn + ".png"
-                fout = os.path.join(OVERLAY_DIR, subdir, fout)
-                cv2.imwrite(fout, overlay,  [int(cv2.IMWRITE_PNG_COMPRESSION), 0])
-            else:
-                plot_samples_matplotlib([img0, visual_pred], ["Sample", "Prediction"], fname=fout)
-
-            trans = str.maketrans('.,', ',.')
-            print(format(dice, ',.6f').translate(trans) + "\n", end="", file=open(FILE_DICE_CSV, 'a'))
-
-
-            # compute trimap output and save image to disk
-            fout = os.path.join(PREDICT_MASK_DIR, subdir, output_fname)
-            img1 = tf.image.resize(visual_pred, (300, 300))    # TODO HARDCODED fit with Parkinson dataset
-            img1 = tf.cast(img1, tf.uint8)
-            img1 = tf.image.encode_png(img1)
-            tf.io.write_file(fout, img1)
-
-            # compute grayscale segmented image and save it to disk
-            fout = os.path.join(PREDICT_IMAGES_DIR, subdir, output_fname)
-            #logger.debug("Saving grayscale segmented image to file: " + output_fname)
-            jpeg = generate_greyscale_image(visual_pred)
-            tf.io.write_file(fout, jpeg)
-        
-        if nTrain > 0:
-            avgTrain = avgTrain / nTrain
-        if nVal > 0:
-            avgVal   = avgVal / nVal
-        if nTest > 0:
-            avgTest  = avgTest / nTest
         print("Average training dice: {:.4f}".format(avgTrain))
         print("Average validation dice: {:.4f}".format(avgVal))
         print("Average test dice: {:.4f}".format(avgTest))
