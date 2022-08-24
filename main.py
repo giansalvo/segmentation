@@ -859,7 +859,7 @@ def get_overlay(img_sample, img_pred, img_gt):
     #####
     # extract contour of foreground area from ground truth
     #####
-    img_gt += OFFSET +1
+    img_gt += OFFSET
     img_gt=cv2.cvtColor(img_gt, cv2.COLOR_GRAY2BGR)
     # change color space and set color mask
     imghsv = cv2.cvtColor(img_gt, cv2.COLOR_BGR2HSV)
@@ -1049,6 +1049,7 @@ def do_predict_all(training_files, validation_files, test_files, output=False):
                 i1 = np.float32(i1)
                 i2 = truth.numpy()
                 i2 = np.squeeze(i2)
+                i2 += 1 # de-normalization
 
                 overlay = get_overlay(i0, i1, i2)
                 overlay = put_text(overlay, "DSC = {:.2f}".format(dice))
