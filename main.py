@@ -771,8 +771,9 @@ def fit_network(network_model, images_dataset, epochs, steps_per_epoch, validati
 def read_image(image_path, channels=3):
     img0 = tf.io.read_file(image_path)
     img0 = tf.image.decode_jpeg(img0, channels=channels)
+    height, width, _ = img0.shape
     img0 = tf.image.resize(img0, [img_size,img_size])
-    return img0
+    return img0, width, height
 
 
 def infer(model, image_tensor):
@@ -827,7 +828,7 @@ def put_text(image, text, x=5, y=20, w=20, h=40):
         1)  # font stroke  
     return image
 
-def get_overlay(img_sample, img_pred, img_gt):
+def get_overlay(img_sample, img_pred, img_gt=None):
     # overlay between sample image, ground truth and prediction
     FOREGROUND = 1
     OFFSET = 255 - FOREGROUND
@@ -859,19 +860,20 @@ def get_overlay(img_sample, img_pred, img_gt):
     #####
     # extract contour of foreground area from ground truth
     #####
-    img_gt += OFFSET
-    img_gt=cv2.cvtColor(img_gt, cv2.COLOR_GRAY2BGR)
-    # change color space and set color mask
-    imghsv = cv2.cvtColor(img_gt, cv2.COLOR_BGR2HSV)
-    mask_color = cv2.inRange(imghsv, COLOR_WHITE_LOWER, COLOR_WHITE_UPPER)
-    # get close contour
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, ksize=(3, 3))
-    img_close_contours = cv2.morphologyEx(mask_color, cv2.MORPH_CLOSE, kernel, iterations=1)
-    # Find outer contours
-    cnts, _ = cv2.findContours(img_close_contours, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    # img_contours = np.zeros((img_gt.shape[0], img_gt.shape[1], 3), dtype="uint8")  # RGB image black
-    # and draw on previously prepared image
-    cv2.drawContours(result, cnts, -1, CONTOUR_COLOR, CONTOUR_THICK)
+    if img_gt is not None:
+        img_gt += OFFSET
+        img_gt=cv2.cvtColor(img_gt, cv2.COLOR_GRAY2BGR)
+        # change color space and set color mask
+        imghsv = cv2.cvtColor(img_gt, cv2.COLOR_BGR2HSV)
+        mask_color = cv2.inRange(imghsv, COLOR_WHITE_LOWER, COLOR_WHITE_UPPER)
+        # get close contour
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, ksize=(3, 3))
+        img_close_contours = cv2.morphologyEx(mask_color, cv2.MORPH_CLOSE, kernel, iterations=1)
+        # Find outer contours
+        cnts, _ = cv2.findContours(img_close_contours, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        # img_contours = np.zeros((img_gt.shape[0], img_gt.shape[1], 3), dtype="uint8")  # RGB image black
+        # and draw on previously prepared image
+        cv2.drawContours(result, cnts, -1, CONTOUR_COLOR, CONTOUR_THICK)
     
     # cv2.imshow("result", result)
     # cv2.waitKey(0)
@@ -996,7 +998,7 @@ def do_predict_all(training_files, validation_files, test_files, output=False):
         if output:
             print(os.path.split(input_fname)[0] + "; " + os.path.split(input_fname)[1] + "; ", end="", file=open(FILE_DICE_CSV, 'a'))
 
-        img0 = read_image(input_fname)
+        img0, _, _ = read_image(input_fname)
         img_tensor = tf.cast(img0, tf.float32) / 255.0    # normalize
         img = np.expand_dims(img_tensor, axis=0)
         predictions = model.predict(img)
@@ -1543,7 +1545,7 @@ def main():
             print("ERROR: network_structure_path or weights_fname argument must be provided.")
             exit(1)
 
-        img0 = read_image(input_fname)
+        img0, width, height = read_image(input_fname)
         img_tensor = tf.cast(img0, tf.float32) / 255.0    # normalize
         print("img_tensor tensor shape: " + str(img_tensor.shape))
         img = np.expand_dims(img_tensor, axis=0)
@@ -1579,7 +1581,7 @@ def main():
         fout = "pred_" + wfn + "_" + fn + ".jpg"
         if os.path.exists(truth_path):
             logger.debug("Displaying ground truth image found here: {}".format(str(truth_path)))
-            truth = read_image(truth_path, 1)
+            truth, _, _ = read_image(truth_path, 1)
             truth -= 1 # normalize
 
             y_truth = tf.expand_dims(truth, axis=0)
@@ -1592,7 +1594,7 @@ def main():
 
             # compute and save overlay image
             fout = fn + "_ovl.png"
-            print("Saving overlay image to file: " + fout)
+            print("Saving overlay image to file {} with original resolution {}x{}".format(fout,width, height))
             # convert to OpenCV image format
             i0 = img0.numpy()
             i1 = visual_pred.numpy()
@@ -1602,9 +1604,22 @@ def main():
             i2 = np.squeeze(i2)
             overlay = get_overlay(i0, i1, i2)
             overlay = put_text(overlay, "DSC = {:.2f}".format(dice))
+            overlay = cv2.resize(overlay, (width, height))
             cv2.imwrite(fout, overlay,  [int(cv2.IMWRITE_PNG_COMPRESSION), 0])
         else:
             plot_samples_matplotlib([img0, visual_pred], ["Sample", "Prediction"], fname=fout)
+
+            # compute and save overlay image
+            fout = fn + "_ovl.png"
+            print("Saving overlay image to file {} with original resolution {}x{}".format(fout,width, height))
+            # convert to OpenCV image format
+            i0 = img0.numpy()
+            i1 = visual_pred.numpy()
+            i1 = np.squeeze(i1)
+            i1 = np.float32(i1)
+            overlay = get_overlay(i0, i1, None)
+            overlay = cv2.resize(overlay, (width, height))
+            cv2.imwrite(fout, overlay,  [int(cv2.IMWRITE_PNG_COMPRESSION), 0])
             print("Ground truth image not found!")
 
     elif args.action == ACTION_PREDICT_ALL:
