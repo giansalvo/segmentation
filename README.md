@@ -1,10 +1,10 @@
 # Introduction
-This script implements several Convolutional Neural Network (several version of U-net, DeepLavb3+) to perform the semantic segmentation of 2D images. The framework used is Keras by Tensorflow.
+This script implements several Convolutional Neural Network (several versions of U-net, DeepLavb3+) to perform the semantic segmentation of 2D images. The framework used is Keras by Tensorflow.
 
 The type of data that we are going to manipulate consists in:
 
     - a jpeg image with 3 channels (RGB)
-    - a png mask with 1 channel (for each pixel we have 1 true class over 150 possible)
+    - a png mask with 1 channel (for each pixel we have 1 out of 3 possible classes)
 
 You can find useful information by reading the official tensorflow tutorials:
 
@@ -175,7 +175,7 @@ Part of the code was adapted from original code and article by Yann Leguilly:
 The implementation of the deeplabv3plus network was adapted from code by Emil Zakirov and others:
 - https://github.com/bonlime/keras-deeplab-v3-plus
 
-The implementation of the deeplabv3plus network was adapted from code by Vidushi Bhatia and others:
+The implementation of the U-net network was adapted from code by Vidushi Bhatia and others:
 - https://www.kaggle.com/code/vidushibhatia/2-ultrasound-nerve-seg-unet-from-scratch
 - https://colab.research.google.com/gist/kumarikanak/254381203742483cbe0ddce4f64945e6/u-net-implementation.ipynb#scrollTo=f5i7Thf4FDFG
 
