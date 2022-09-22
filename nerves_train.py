@@ -303,7 +303,7 @@ X_train, X_valid, y_train, y_valid = train_test_split(X, y, test_size=0.2, rando
 
 print ("Create and compile the network model...")
 # Call the helper function for defining the layers for the model, given the input image size
-unet = UNetCompiled(input_size=(128,128,3), n_filters=32, n_classes=2)
+unet = UNetCompiled(input_size=(128,128,3), n_filters=32, n_classes=3)
 # unet = create_model_UNet2(output_channels=3, input_size=128, classes=2)
 
 # Check the summary to better interpret how the output dimensions change in each layer

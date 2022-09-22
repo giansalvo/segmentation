@@ -210,6 +210,7 @@ DEALINGS IN THE SOFTWARE.
 # Citation
 If you use our code in your project please cite our article:
 
+```
 @ARTICLE{123456,
     author={G. Gusinu, C. Frau, G.A. Trunfio, P. Solla, L. Sechi},
     journal={xxxx}, 
