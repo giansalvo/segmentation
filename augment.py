@@ -38,6 +38,9 @@ ACTION_TRASLATE = "traslate"
 FOLDER_IMAGES = "images"
 FOLDER_ANNOTATIONS = "annotations"
 
+ROTATION_DEGREE = 30
+TRASLATION_PERCENTAGE = 0.25
+
 
 def augment_traslate(folder_root_orig, folder_root_dest):
     ext = ('.jpg')
@@ -60,8 +63,8 @@ def augment_traslate(folder_root_orig, folder_root_dest):
             # read file and decode image
             image = cv2.imread(fin)
             h, w, _ = image.shape
-            delta_h = 0.25 * h * random.uniform(-1, 1)
-            delta_w = 0.25 * w * random.uniform(-1, 1)
+            delta_h = TRASLATION_PERCENTAGE * h * random.uniform(-1, 1)
+            delta_w = TRASLATION_PERCENTAGE * w * random.uniform(-1, 1)
             shifted = imutils.translate(image, delta_w, delta_h)
             # cv2.imshow("Shifted Down", shifted)
             # cv2.waitKey(0)
@@ -108,7 +111,7 @@ def augment_rotate(folder_root_orig, folder_root_dest):
             # read file and decode image
             image = cv2.imread(fin)
             # h, w, _ = image.shape
-            angle = 30 * random.uniform(-1, 1)
+            angle = ROTATION_DEGREE * random.uniform(-1, 1)
             rotated = imutils.rotate(image, angle)
             # cv2.imshow("Rotated (Problematic)", rotated)
             # cv2.waitKey(0)
@@ -161,7 +164,7 @@ def main():
     os.mkdir(output_path)
     print("Perform augmentation: " + action)
     if action is ACTION_TRASLATE:
-        augment_rotate(input_path, output_path)
+        augment_traslate(input_path, output_path)
     else:
         augment_rotate(input_path, output_path)
 
