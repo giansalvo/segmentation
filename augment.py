@@ -21,14 +21,20 @@ DEALINGS IN THE SOFTWARE.
 """
 import os
 import time
+from xml.etree.ElementTree import VERSION
 import cv2
 import numpy as np
 import imutils
 import random
 import datetime
+import argparse
 
-DATASET_FOLDER_ORIG = "dataset_sn_before_split"
-DATASET_FOLDER_NEW = "dataset_augmented"
+PROGRAM_VERSION = "1.0"
+COPYRIGHT_NOTICE = "Copyright(c) 2022 Giansalvo Gusinu"
+
+ACTION_ROTATE = "rotate"
+ACTION_TRASLATE = "traslate"
+
 FOLDER_IMAGES = "images"
 FOLDER_ANNOTATIONS = "annotations"
 
@@ -131,9 +137,35 @@ def augment_rotate(folder_root_orig, folder_root_dest):
 ################
 #  main
 ################
-print("Creating folder for augmented dataset {}...".format(DATASET_FOLDER_NEW))
-os.mkdir(DATASET_FOLDER_NEW)
-print("Perform augmentation: traslate...")
-augment_rotate(DATASET_FOLDER_ORIG, DATASET_FOLDER_NEW)
+def main():
+    parser = argparse.ArgumentParser(
+        description=COPYRIGHT_NOTICE,
+        epilog = "Examples:\n"
+                "       Prepare the augmented dataset:\n"
+                "         $python %(prog)s -a rotate|translate -i input_dataset_folder -o output_dataset_folder\n"
+                "\n",
+        formatter_class=argparse.RawTextHelpFormatter)
+    parser.add_argument('--version', action='version', version='%(prog)s v.' + PROGRAM_VERSION)
+    parser.add_argument('-i', '--input_dataset_dir', required=True, help="The dataset origin folder.")
+    parser.add_argument('-o', '--output_dataset_dir', required=True, help="The dataset destination folder.")
+    parser.add_argument('-a', "--action", required=True,
+                        choices=(ACTION_ROTATE, ACTION_TRASLATE), 
+                        help="The action to augment the dataset: " + ACTION_ROTATE + ", " + ACTION_TRASLATE)
+    args = parser.parse_args()
 
-print("Program ended.")
+    input_path = args.input_dataset_dir
+    output_path = args.output_dataset_dir
+    action = args.action
+
+    print("Creating folder for augmented dataset {}...".format(output_path))
+    os.mkdir(output_path)
+    print("Perform augmentation: " + action)
+    if action is ACTION_TRASLATE:
+        augment_rotate(input_path, output_path)
+    else:
+        augment_rotate(input_path, output_path)
+
+    print("Program ended.")
+
+if __name__ == '__main__':
+    main()
