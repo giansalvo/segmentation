@@ -52,6 +52,7 @@ from tensorflow.keras import backend as K
 from keras.utils.layer_utils import count_params
 from tensorflow.keras.layers import *   # used here for creating dummy network model
 import tensorflow_addons as tfa
+from tensorflow.python.framework.convert_to_constants import convert_variables_to_constants_v2
 from PIL import Image
 
 from sklearn.model_selection import KFold
@@ -77,6 +78,7 @@ ACTION_SUMMARY = "summary"
 ACTION_EVALUATE = "evaluate"
 ACTION_INSPECT = "inspect"
 ACTION_PREDICT_ALL = "predict_all"
+ACTION_EXPORT = "export"
 PNG_EXT = ".png"
 FEXT_JPEG = "*.jpg"
 MODEL_DUMMY = "dummy"
@@ -1294,6 +1296,9 @@ def main():
                 "       Evaluate the network loss/accuracy performances based on the test set in the dataset directories hierarchy:\n"
                 "         $python %(prog)s evaluate -m unet_us -dr dataset_dir -w weigths_file.h5 [--check] [-is 256]\n"
                 "\n"
+                "       Export frozen graph:\n"
+                "         $python %(prog)s export -m unet_us -w weight_file.h5\n"
+                "\n"                
                 "       Inspect some predictions from previous trainings:\n"
                 "         $python %(prog)s inspect -r *.jpg\n"
                 "\n",
@@ -1380,7 +1385,8 @@ def main():
     if network_structure_path is not None:
         print("Loading network model from " + network_structure_path)
         model = tf.keras.models.load_model(network_structure_path, custom_objects={'dice_coef': dice_coef})
-    elif action == ACTION_TRAIN or action == ACTION_PREDICT or action == ACTION_PREDICT_ALL or action == ACTION_EVALUATE or action == ACTION_SUMMARY:
+    elif action == ACTION_TRAIN or action == ACTION_PREDICT or action == ACTION_PREDICT_ALL or \
+         action == ACTION_EVALUATE or action == ACTION_SUMMARY or action == ACTION_EXPORT:
         print("Creating network model...")
         if network_model == MODEL_DUMMY:
             model = create_model_dummy(input_size=(img_size, img_size, N_CHANNELS), classes=classes_for_pixel, transfer_learning=transfer_learning)
@@ -1420,7 +1426,8 @@ def main():
         else:
             raise ValueError('ERROR: network model not specified or not supported. Check parameter -m')
 
-    if action == ACTION_TRAIN or action == ACTION_PREDICT or action == ACTION_PREDICT_ALL or action == ACTION_EVALUATE or action == ACTION_SUMMARY:
+    if action == ACTION_TRAIN or action == ACTION_PREDICT or action == ACTION_PREDICT_ALL or \
+        action == ACTION_EVALUATE or action == ACTION_SUMMARY:
         if init_weights_fname is not None:
             print("Initializing network weights from file " + init_weights_fname)
             model.load_weights(init_weights_fname, by_name=False)
@@ -1833,6 +1840,49 @@ def main():
         fn, fext = os.path.splitext(os.path.basename(weights_fname))
         fn_perf = "perf_" + fn + ".txt"
         do_evaluate(dataset_root_dir=args.dataset_root_dir, batch_size=batch_size, perf_file=fn_perf)
+
+    elif args.action == ACTION_EXPORT:
+        # code adapted from Lei Mao
+        # https://github.com/leimao/Frozen-Graph-TensorFlow/blob/master/TensorFlow_v2/example_1.py
+        if network_structure_path is not None:
+            print("Loading network model from " + network_structure_path)
+            model = tf.keras.models.load_model(network_structure_path, custom_objects={'dice_coef': dice_coef})
+        elif weights_fname is not None:
+            print("Loading network weights from file " + weights_fname)
+            model.load_weights(weights_fname)
+        else:
+            print("ERROR: network_structure_path or weights_fname argument must be provided.")
+            exit(1)
+
+        # Convert Keras model to ConcreteFunction
+        full_model = tf.function(lambda x: model(x))
+        full_model = full_model.get_concrete_function(
+            x=tf.TensorSpec(model.inputs[0].shape, model.inputs[0].dtype))
+
+        # Get frozen ConcreteFunction
+        frozen_func = convert_variables_to_constants_v2(full_model)
+        frozen_func.graph.as_graph_def()
+
+        layers = [op.name for op in frozen_func.graph.get_operations()]
+        print("-" * 50)
+        print("Frozen model layers: ")
+        for layer in layers:
+            print(layer)
+
+        print("-" * 50)
+        print("Frozen model inputs: ")
+        print(frozen_func.inputs)
+        print("Frozen model outputs: ")
+        print(frozen_func.outputs)
+
+        # Save frozen graph from frozen ConcreteFunction to hard drive
+        logdir = "./frozen_models"
+        graph_fname = "frozen_graph.pb"
+        print("Save frozen graph to: " + logdir)
+        tf.io.write_graph(graph_or_graph_def=frozen_func.graph,
+                        logdir=logdir,
+                        name=graph_fname,
+                        as_text=False)
 
     elif args.action == ACTION_INSPECT:
         logger.debug("regexp=" + regexp)
