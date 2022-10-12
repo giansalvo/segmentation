@@ -1878,11 +1878,17 @@ def main():
         # Save frozen graph from frozen ConcreteFunction to hard drive
         logdir = "./frozen_models"
         graph_fname = "frozen_graph.pb"
-        print("Save frozen graph to: " + logdir)
+        fpath = os.path.join(logdir, graph_fname)
+        print("Save frozen graph to: " + fpath)
         tf.io.write_graph(graph_or_graph_def=frozen_func.graph,
                         logdir=logdir,
                         name=graph_fname,
                         as_text=False)
+
+        model_fname = "model_with_weights.h5"
+        fpath = os.path.join(logdir, model_fname)
+        print("Save model with weights to: " + fpath)
+        model.save(fpath)
 
     elif args.action == ACTION_INSPECT:
         logger.debug("regexp=" + regexp)
