@@ -830,6 +830,32 @@ def put_text(image, text, x=5, y=30, w=20, h=40):
         3)  # font stroke  
     return image
 
+
+def image_fusion(background, foreground, sharp=False, alfa=0.5):
+    img1 = background
+    img2 = foreground
+
+    rows,cols,channels = img2.shape
+    roi = img1[0:rows, 0:cols ]
+
+    img2gray = cv2.cvtColor(img2,cv2.COLOR_BGR2GRAY)
+    ret, mask = cv2.threshold(img2gray, 200, 255, cv2.THRESH_BINARY_INV)
+    mask_inv = cv2.bitwise_not(mask)
+    img1_hidden_bg = cv2.bitwise_and(img1, img1, mask = mask)
+    img1_bg = cv2.bitwise_and(roi,roi,mask = mask_inv)
+    img2_fg = cv2.bitwise_and(img2,img2,mask = mask)
+    out_img = cv2.add(img1_bg,img2_fg)
+    img1[0:rows, 0:cols ] = out_img
+
+    if sharp:
+        result = img1
+    else:
+        img1_hidden_merge = cv2.addWeighted(img1_hidden_bg, alfa, img2_fg, 1-alfa, 0.0)
+        result = cv2.add(img1_bg, img1_hidden_merge)
+
+    return result
+
+
 def get_overlay(img_sample, img_pred, img_gt=None):
     # overlay between sample image, ground truth and prediction
     FOREGROUND = 1
@@ -843,21 +869,17 @@ def get_overlay(img_sample, img_pred, img_gt=None):
     CONTOUR_COLOR = (0, 255, 0)  # green contour (BGR)
     CONTOUR_THICK = 2
 
-    # img_sample = cv2.imread("I000.jpg")
-    # print(str(img_sample.shape))
-    # img_pred = cv2.imread("I000_pred.jpg", cv2.IMREAD_GRAYSCALE)
-    # print(str(img_pred.shape))    
-    # img_gt = cv2.imread("I000_gc.png", cv2.IMREAD_GRAYSCALE)
-    # print(str(img_gt.shape))
-    # exit(1)
-
     #####
     # fusion of sample image and foreground area from predicted image
     #####
     img_pred += OFFSET
     img_pred=cv2.cvtColor(img_pred, cv2.COLOR_GRAY2BGR)
     img_pred[np.all(img_pred == WHITE, axis=-1)] = RED
-    result = cv2.addWeighted( img_sample, ALFA, img_pred, BETA, 0.0)
+
+    img_sample = img_sample.astype(np.uint8)
+    img_pred = img_pred.astype(np.uint8)
+   
+    result = image_fusion(img_sample, img_pred)
 
     #####
     # extract contour of foreground area from ground truth
