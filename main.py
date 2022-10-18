@@ -1609,6 +1609,8 @@ def main():
             i1 = np.float32(i1)
             i2 = truth.numpy()
             i2 = np.squeeze(i2)
+            i2 += 1 # de-normalization
+
             overlay = get_overlay(i0, i1, i2)
             overlay = put_text(overlay, "DSC = {:.2f}".format(dice))
             overlay = cv2.resize(overlay, (width, height))
