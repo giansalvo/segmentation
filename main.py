@@ -815,7 +815,7 @@ def generate_colormap_image(input_fname):
 #     rgb = np.stack([r, g, b], axis=2)
 #     return rgb
 
-def put_text(image, text, x=5, y=20, w=20, h=40):
+def put_text(image, text, x=5, y=30, w=20, h=40):
     # blue = (209, 80, 0, 255),  # font color
     white = (255, 255, 255, 255)  # font color
     # Draw black background rectangle
@@ -825,9 +825,9 @@ def put_text(image, text, x=5, y=20, w=20, h=40):
         text,  # text
         (x, y),  # position at which writing has to start
         cv2.FONT_HERSHEY_SIMPLEX,  # font family
-        0.5,  # font size
+        1,  # font size
         white,  # font color
-        1)  # font stroke  
+        3)  # font stroke  
     return image
 
 def get_overlay(img_sample, img_pred, img_gt=None):
