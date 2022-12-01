@@ -90,6 +90,7 @@ MODEL_TRANSUNET = "transunet"
 MODEL_DEEPLABV3PLUS = "deeplabv3plus"   # DEPRECATED
 MODEL_DEEPLABV3PLUS_XCEPTION = "deeplabv3plus_xception"
 MODEL_DEEPLABV3PLUS_MOBILENETV2 = "deeplabv3plus_mobilenetv2"
+MODEL_ATTENTION_UNET = "attention_unet"
 REGEXP_DEFAULT = "*.png"
 TRANSF_LEARN_IMAGENET_AND_FREEZE_DECODER = "imagenet_freeze_decoder"
 TRANSF_LEARN_IMAGENET_AND_FREEZE_ENCODER = "imagenet_freeze_encoder"  # must match with the definition in unet2.py
@@ -1346,7 +1347,9 @@ def main():
     parser.add_argument("-e", "--epochs", required=False, default=EPOCHS, type=int, help="The number of times that the entire dataset is passed forward and backward through the network during the training")
     parser.add_argument("-b", "--batch_size", required=False, default=BATCH_SIZE, type=int, help="the number of samples that are passed to the network at once during the training")
     parser.add_argument('-m', "--model", required=False,
-                        choices=(MODEL_DUMMY, MODEL_UNET, MODEL_UNET2, MODEL_UNET3, MODEL_UNET_US, MODEL_TRANSUNET, MODEL_DEEPLABV3PLUS, MODEL_DEEPLABV3PLUS_XCEPTION, MODEL_DEEPLABV3PLUS_MOBILENETV2), 
+                        choices=(MODEL_DUMMY, MODEL_UNET, MODEL_UNET2, MODEL_UNET3, MODEL_UNET_US, 
+                        MODEL_TRANSUNET, MODEL_DEEPLABV3PLUS, MODEL_DEEPLABV3PLUS_XCEPTION, MODEL_DEEPLABV3PLUS_MOBILENETV2,
+                        MODEL_ATTENTION_UNET), 
                         help="The model of network to be created/used. It must be compatible with the weigths file.")
     parser.add_argument("-l", "--logs_dir", required=False, default=DEFAULT_LOGS_DIR, 
                         help="The directory where training information will be added. If it doesn't exist it will be created.")
@@ -1445,6 +1448,8 @@ def main():
                 model = create_model_deeplabv3plus(weights='cityscapes', backbone='mobilenetv2', input_shape=(img_size, img_size, N_CHANNELS), classes=classes_for_pixel)
             else:
                 model = create_model_deeplabv3plus(weights=None, backbone='mobilenetv2', input_shape=(img_size, img_size, N_CHANNELS), classes=classes_for_pixel)
+        elif network_model == MODEL_ATTENTION_UNET:
+                model = models.att_unet_2d((img_size, img_size, 3), filter_num=[64, 128, 256, 512], n_labels=classes_for_pixel)
         else:
             raise ValueError('ERROR: network model not specified or not supported. Check parameter -m')
 
