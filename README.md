@@ -211,10 +211,12 @@ DEALINGS IN THE SOFTWARE.
 If you use our code in your project please cite our article:
 
 ```
-@ARTICLE{123456,
+@ARTICLE{segmentation2022,
     author={G. Gusinu, C. Frau, G.A. Trunfio, P. Solla, L. Sechi},
-    journal={xxxx}, 
-    title={xxx}, 
+    title={Segmentation of Substantia Nigra in Brain Parenchyma Sonographic images using Deep Learning},
+    publisher = {GitHub},
+    journal = {GitHub repository},
+    howpublished = {\url{https://github.com/giansalvo/segmentation}}
     year={2022},
     volume={xx},
     number={xx},
