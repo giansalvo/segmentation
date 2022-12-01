@@ -58,6 +58,7 @@ from PIL import Image
 from sklearn.model_selection import KFold
 
 # https://github.com/yingkaisha/keras-unet-collection/blob/d30f14a259656d2f26ea11ed978255d6a7d0ce37/examples/user_guide_models.ipynb
+# https://github.com/yingkaisha/keras-unet-collection
 from keras_unet_collection import models
 
 from deeplab_v3_plus import create_model_deeplabv3plus
