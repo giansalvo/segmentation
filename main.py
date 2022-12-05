@@ -66,6 +66,7 @@ from unet import create_model_UNet
 from unet2 import create_model_UNet2
 from unet3 import create_model_UNet3
 from unet_us import create_model_UNet_US
+from AttResUNet import create_model_AttentionResUNet
 
 # this should remove the warning about abs function not available
 import absl.logging
@@ -91,7 +92,8 @@ MODEL_TRANSUNET = "transunet"
 MODEL_DEEPLABV3PLUS = "deeplabv3plus"   # DEPRECATED
 MODEL_DEEPLABV3PLUS_XCEPTION = "deeplabv3plus_xception"
 MODEL_DEEPLABV3PLUS_MOBILENETV2 = "deeplabv3plus_mobilenetv2"
-MODEL_ATTENTION_UNET = "attention_unet"
+MODEL_ATTENTION_UNET = "attnunet"
+MODEL_ATTENTION_RESUNET = "attnresunet"
 REGEXP_DEFAULT = "*.png"
 TRANSF_LEARN_IMAGENET_AND_FREEZE_DECODER = "imagenet_freeze_decoder"
 TRANSF_LEARN_IMAGENET_AND_FREEZE_ENCODER = "imagenet_freeze_encoder"  # must match with the definition in unet2.py
@@ -1350,7 +1352,7 @@ def main():
     parser.add_argument('-m', "--model", required=False,
                         choices=(MODEL_DUMMY, MODEL_UNET, MODEL_UNET2, MODEL_UNET3, MODEL_UNET_US, 
                         MODEL_TRANSUNET, MODEL_DEEPLABV3PLUS, MODEL_DEEPLABV3PLUS_XCEPTION, MODEL_DEEPLABV3PLUS_MOBILENETV2,
-                        MODEL_ATTENTION_UNET), 
+                        MODEL_ATTENTION_UNET, MODEL_ATTENTION_RESUNET), 
                         help="The model of network to be created/used. It must be compatible with the weigths file.")
     parser.add_argument("-l", "--logs_dir", required=False, default=DEFAULT_LOGS_DIR, 
                         help="The directory where training information will be added. If it doesn't exist it will be created.")
@@ -1450,7 +1452,7 @@ def main():
             else:
                 model = create_model_deeplabv3plus(weights=None, backbone='mobilenetv2', input_shape=(img_size, img_size, N_CHANNELS), classes=classes_for_pixel)
         elif network_model == MODEL_ATTENTION_UNET:
-                model = models.att_unet_2d(input_size=(img_size, img_size, 3), 
+               model = models.att_unet_2d(input_size=(img_size, img_size, 3), 
                             filter_num=[64, 128, 256, 512, 1024],
                             n_labels=classes_for_pixel,
                             stack_num_down=2, stack_num_up=2,
@@ -1466,6 +1468,8 @@ def main():
                             freeze_backbone=False,
                             freeze_batch_norm=False,
                             name='att_unet')
+        elif network_model == MODEL_ATTENTION_RESUNET:
+                model = create_model_AttentionResUNet((img_size, img_size, 3), n_classes=classes_for_pixel, transfer_learning=transfer_learning)
         else:
             raise ValueError('ERROR: network model not specified or not supported. Check parameter -m')
 
