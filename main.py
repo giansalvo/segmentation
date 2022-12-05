@@ -1449,7 +1449,22 @@ def main():
             else:
                 model = create_model_deeplabv3plus(weights=None, backbone='mobilenetv2', input_shape=(img_size, img_size, N_CHANNELS), classes=classes_for_pixel)
         elif network_model == MODEL_ATTENTION_UNET:
-                model = models.att_unet_2d((img_size, img_size, 3), filter_num=[64, 128, 256, 512], n_labels=classes_for_pixel)
+                model = models.att_unet_2d(input_size=(img_size, img_size, 3), 
+                            filter_num=[64, 128, 256, 512, 1024],
+                            n_labels=classes_for_pixel,
+                            stack_num_down=2, stack_num_up=2,
+                            activation='ReLU', 
+                            atten_activation='ReLU', 
+                            attention='add', 
+                            output_activation='Sigmoid', 
+                            batch_norm=True, 
+                            pool=False, 
+                            unpool=False,
+                            backbone=None,
+                            weights=None,
+                            freeze_backbone=False,
+                            freeze_batch_norm=False,
+                            name='att_unet')
         else:
             raise ValueError('ERROR: network model not specified or not supported. Check parameter -m')
 
