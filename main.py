@@ -1833,17 +1833,22 @@ def main():
         img_dir = os.path.join(dataset_root_dir, DATASET_IMG_SUBDIR, DATASET_TRAIN_SUBDIR)
         annot_dir = os.path.join(dataset_root_dir, DATASET_ANNOT_SUBDIR, DATASET_TRAIN_SUBDIR)
         n = 0
+        err = False
         for i in range(ntrain):
             j = indexes[i]
             shutil.copy2(filenames[j], img_dir)
-            fn, _ = os.path.splitext(os.path.basename(filenames[j]))
-            fn = os.path.join(initial_annotations_dir, fn + PNG_EXT)
+            fn1, _ = os.path.splitext(os.path.basename(filenames[j]))
+            fn = os.path.join(initial_annotations_dir, fn1 + PNG_EXT)
+            if not os.path.isfile(fn):
+                print("cp trimap_HC_400x400_cl2.png $2/$TRIMAP_SUBFOLDER/bin/"+ fn1 + PNG_EXT)
+                err = True
+                continue
             shutil.copy2(fn, annot_dir)
             if n % 50 == 0:
                 print (".", end = "", flush=True)
             n += 1
         print("\n")
-
+        
         # VALIDATION DATASET
         print("Copying images and trimaps of validation set...")
         img_dir = os.path.join(dataset_root_dir, DATASET_IMG_SUBDIR, DATASET_VAL_SUBDIR)
@@ -1852,8 +1857,13 @@ def main():
         for i in range(nvalid):
             j = indexes[ntrain + i]
             shutil.copy2(filenames[j], img_dir)
-            fn, _ = os.path.splitext(os.path.basename(filenames[j]))
-            fn = os.path.join(initial_annotations_dir, fn + PNG_EXT)
+            fn1, _ = os.path.splitext(os.path.basename(filenames[j]))
+            fn = os.path.join(initial_annotations_dir, fn1 + PNG_EXT)
+            if not os.path.isfile(fn):
+                print("cp trimap_HC_400x400_cl2.png $2/$TRIMAP_SUBFOLDER/bin/"+ fn1 + PNG_EXT)
+                err = True
+                continue
+            
             shutil.copy2(fn, annot_dir)
             if n % 50 == 0:
                 print (".", end = "", flush=True)
@@ -1867,13 +1877,21 @@ def main():
         for i in range(ntest):
             j = indexes[ntrain + nvalid + i] 
             shutil.copy2(filenames[j], img_dir)
-            fn, _ = os.path.splitext(os.path.basename(filenames[j]))
-            fn = os.path.join(initial_annotations_dir, fn + PNG_EXT)
+            fn1, _ = os.path.splitext(os.path.basename(filenames[j]))
+            fn = os.path.join(initial_annotations_dir, fn1 + PNG_EXT)
+            if not os.path.isfile(fn):
+                print("cp trimap_HC_400x400_cl2.png $2/$TRIMAP_SUBFOLDER/bin/"+ fn1 + PNG_EXT)
+                err = True
+                continue
             shutil.copy2(fn, annot_dir)
             if n % 50 == 0:
                 print (".", end = "", flush=True)
             n += 1
         print("\n")
+        if err == True:
+            # abort
+            print("Missing files: program abort.")
+            exit()
 
     elif args.action == ACTION_EVALUATE:
         if network_structure_path is not None:
