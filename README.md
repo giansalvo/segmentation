@@ -211,16 +211,15 @@ DEALINGS IN THE SOFTWARE.
 If you use our code in your project please cite our article:
 
 ```
-@ARTICLE{segmentation2022,
-    author={G. Gusinu, C. Frau, G.A. Trunfio, P. Solla, L. Sechi},
-    title={Segmentation of Substantia Nigra in Brain Parenchyma Sonographic images using Deep Learning},
-    publisher = {GitHub},
-    journal = {GitHub repository},
-    howpublished = {\url{https://github.com/giansalvo/segmentation}}
-    year={2022},
-    volume={xx},
-    number={xx},
-    pages={xx-xx},
-    doi={xxxx}
+@article{gusinu2023segmentation,
+  title={Segmentation of Substantia Nigra in Brain Parenchyma Sonographic Images Using Deep Learning},
+  author={Gusinu, Giansalvo and Frau, Claudia and Trunfio, Giuseppe A and Solla, Paolo and Sechi, Leonardo Antonio},
+  journal={Journal of Imaging},
+  volume={10},
+  number={1},
+  pages={1},
+  year={2023},
+  publisher={MDPI}
 }
+
 ```
